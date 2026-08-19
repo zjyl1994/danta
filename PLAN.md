@@ -1,7 +1,7 @@
 # danta 蛋挞图床 — 技术方案
 
 > 单人自用图床：上传→链接；后台倒序列表（预览+翻页）。两上传模式：原图直存 / 缩放至 2560 内转 WebP。统一存 R2，CDN 域名分离。无标签、无对外展示。
-> 技术栈：Go 1.25 + Fiber v3 + GORM（SQLite）+ Cloudflare R2；前端 Vite + React + MUI；控制/数据平面分离；零 CGO。
+> 技术栈：Go 1.25 + Fiber v3 + GORM（SQLite）+ Cloudflare R2；前端 Vite + React + MUI；控制/数据平面分离；零 CGO（静态 WebP 编解码 + 动画检测用 `github.com/deepteams/webp`；EXIF 读取用 `github.com/bep/imagemeta`，均纯 Go）。
 
 ## 1. 架构
 
@@ -26,19 +26,35 @@
 
 ## 3. 功能
 
-- **上传**：`POST /api/upload`（multipart/form-data：`file` + `original` 布尔，省略=压缩模式）。每张图单独选模式，前端多文件并行上传（限并发）。鉴权：上传 Key（`Bearer <upload_key>`）**或**管理员 JWT；**不支持 `?key=`**。
+- **上传**：`POST /api/upload`（multipart/form-data：`file` + `original` 布尔，省略=压缩模式）。**首页顶部全局开关切换模式（默认压缩，开关=原图直存）**，前端多文件并行上传（限并发）。鉴权：上传 Key（`Bearer <upload_key>`）**或**管理员 JWT；**不支持 `?key=`**。
+  - **前端预压缩（浏览器 canvas）**：压缩模式下上传前尝试 `createImageBitmap(blob, { imageOrientation: 'from-image' })`（保 EXIF 方向；**不支持 `imageOrientation` 时回退 `<img>` 元素加载（浏览器自带 EXIF 校正），再失败则回退传原始字节交后端转 EXIF**）→ 按 `/api/status` 的 `resize_max_dim` 等比缩放 → `canvas.toBlob('image/webp', webp_quality/100)` → 上传 WebP 字节（`original=false`）；canvas 不可用/失败、或文件为 gif/avif（不宜/无法 canvas 处理）→ 回退传原始字节。
+  - **magic 校验（全量）**：所有上传两种模式先过 magic 白名单（jpg/jpeg/png/gif/webp/bmp/avif），非白名单 → 400（`unsupported_type`）。"解码失败回退"仅指白名单内但无法解码（如 avif）。
   - **原图模式**（`original=true`）：magic 识别 + SHA-256 后**原字节直存 R2**，不解码/缩放/转码。
-  - **压缩模式**（`original=false`）：解码 → 等比缩放至长边 ≤`resize_max_dim`（已达标保持尺寸，仅重编码）→ 转 WebP（动画→动画 WebP）→ 存 R2；无法解码（如 avif）**回退原图直存**（`original` 记 true）。
-- **去重**：SHA-256(原始字节) 命中即返回已有链接，不转码、不写 R2、不新增记录（`original` 以原记录为准）；导入记录 `hash`=NULL 不参与去重。
-- **流程**（单机上传锁内串行）：读+magic+SHA-256（锁外）→ 拿锁 → 查重（命中结束）→ 按模式处理 → 生成 ObjectKey（`{ulid}.{ext}`）→ 写 R2（失败直接报错）→ 写 DB（失败补偿删 R2 后报错）→ 释放锁。`Hash` 唯一索引作多实例兜底。
-- **配置门控**：已设密码但未配 R2 或 `cdn_host` → `POST /api/upload` 拒绝（400 + `config_required`）；配置完成后自动恢复。
+  - **压缩模式**（`original=false`）：**收到的已是 WebP 且 DecodeConfig 头读取尺寸 ≤`resize_max_dim` → 视为前端已压缩，跳过重编码直接存**；否则仅处理静态单帧图——**bep/imagemeta 读 EXIF `Orientation`（`Sources=EXIF|CONFIG`，JPEG 及带 eXIf/EXIF chunk 的 PNG/WebP 均支持）→ 非 normal 先物理旋转**（Go 解码不含 EXIF，不旋转则 WebP 方向错误）→ 解码 → 等比缩放至长边 ≤`resize_max_dim`（已达标保持尺寸，仅重编码）→ 转 WebP（deepteams/webp 静态编码）→ 存 R2；**尺寸取旋转后**。**GIF 一律、动画 WebP（GetFeatures.HasAnimation）、无法解码（如 avif）→ 回退原图直存**（`original` 记 true）。不做动画转码（动图存原格式，兼容性最好）。
+- **去重**：SHA-256(原始字节)，查重条件 `hash=? AND original=?`——**模式须一致**（原图命中原图记录、压缩命中压缩记录），命中即返回已有链接，不转码、不写 R2、不新增记录；同一图两种模式可并存（各占一对象）。导入记录 `hash`=NULL 不参与去重。
+- **流程**（double-check，编码在锁外并行）：读+magic+SHA-256（锁外）→ 拿锁查重（命中结束）→ 释放锁 → **锁外编码/处理** → 重新拿锁 → **二次查重**（命中则丢弃处理结果结束）→ 生成 ObjectKey（`{ulid}.{ext}`）→ 写 R2（失败直接报错）→ 写 DB（失败补偿删 R2 后报错）→ 释放锁。`(hash, original)` 复合唯一索引作多实例兜底。
+
+**上传接口规格（汇总）**：
+
+- `POST /api/upload`，multipart/form-data：`file` + `original`（省略=压缩）；`Authorization: Bearer <upload_key>` 或管理员 JWT，无 `?key=`。
+- **流程**：`读+magic+SHA-256（锁外）→ 拿锁查重 (hash,original) 命中→返回已有链接 → 释放锁 → 锁外处理 → 重新拿锁→二次查重 命中→丢弃处理结果 → 生成 ObjectKey {ulid}.{ext} → 写 R2（附 Content-Type + Cache-Control: public, max-age={cache_max_age}, immutable）→ 写 DB（失败补偿删 R2）→ 释放锁`。
+- **模式**：
+  - magic 白名单（jpg/jpeg/png/gif/webp/bmp/avif）外 → 400 `unsupported_type`。
+  - `original=true`：原字节直存，ext=magic 格式。
+  - `original=false`：① 已是 WebP 且 DecodeConfig 尺寸 ≤`resize_max_dim` → 原样直存（前端已压缩，避免二次有损）；② 否则 bep/imagemeta EXIF 方向→旋转→解码→缩放长边≤`resize_max_dim`→deepteams/webp 编码→存（尺寸取旋转后）；③ **GIF 一律 / 动画 WebP / 无法解码(avif) → 回退原图直存**（`original=true`）。
+- **去重**：SHA-256(收到的字节)；查重 `(hash, original)` 模式一致，命中返回原记录 `id/url`，不写 R2/DB。
+- **响应**：`{ id, original, url, size, width, height, mime, created_at }`（去重命中返回原记录）。
+- **行为差异**：浏览器压缩模式 = canvas 预压 WebP → 走①直存；外部工具（ShareX/PicGo/uPic）压缩模式 = 传原始字节 → 走②完整流水线。
+- **配置门控**：已设密码但未配 R2 或 `cdn_host` → 400 `config_required`。
+
+
 - **外链**：API 返回单个 `url`；五格式前端拼接——URL=`{url}`；Markdown=`![{name}]({url})`；Markdown 带链接=`[![{name}]({url})]({url})`；BBCode=`[img]{url}[/img]`；HTML=`<img src="{url}" alt="{name}">`（`name`=原始文件名）。
 - **通用接口**：无私有协议兼容层；全走标准 REST + JSON + multipart + Bearer，README 给 ShareX / PicGo web-uploader / uPic 配置示例（JSONPath `url` / 正则）。
 - **管理后台**：倒序列表（`created_at DESC`）+ 预览（`<img src=CDN 直链>`）+ 翻页（`?page=&size=`，size 上限 100）+ 单删 / 批量删除（同步 R2+DB，失败可重试）+ 批量复制外链。无标签/编辑/过滤。
 - **统计**：图片总数 / 总存储（`SUM(size)`）/ 近 24h 新增 / 原图直存数（`COUNT(original=1)`）。
-- **孤儿清理**：`POST /api/admin/cleanup`（设置页按钮）——`ListObjectsV2` 分页扫全桶，对象键与 DB 的 ObjectKey 精确比对，删除无主对象；先导入后清理。
-- **迁移导入（R2→DB）**：只读 R2（List/Get），绝不 Put/Delete/改键。`ListObjectsV2` 分页（可限 `prefix`）→ 扩展名白名单（jpg/jpeg/png/gif/webp/bmp/avif）过滤 → 已存在跳过 → 写记录（ObjectKey=原键、size/LastModified 取 S3 元数据、mime 按扩展名映射、name=键 basename、original=true、hash 暂空）。可选 `fetch_dimensions`：下载解码取 width/height + 算存储字节 SHA-256 写 hash。先 `scan`（dry-run）后 `run`。
-- **前端**：Vite+React+MUI。页面：Setup / Login / 仪表盘 / 上传（拖拽/粘贴/多文件/原图开关/结果面板预览+五格式复制）/ 管理（倒序列表+预览+翻页+单删/批量删+批量复制）/ 设置（迁移导入 scan→run、孤儿清理、R2/域名/缓存等）。SPA 路由仅前端代管，后端只处理 `/api/*`；dev 反代见 §7。
+- **孤儿清理**：`POST /api/admin/cleanup`（设置页按钮）——`ListObjectsV2` 分页扫全桶，对象键与 DB 的 ObjectKey 精确比对，删除无主对象；**DB 无记录且 `LastModified` 在 10 分钟内（上传宽限）的对象跳过不删**（避免与"R2 已写、DB 未写"窗口竞态）；先导入后清理。
+- **迁移导入（R2→DB）**：只读 R2（**仅 `ListObjectsV2`**），绝不 Get/Put/Delete/改键。`ListObjectsV2` 分页（可限 `prefix`）→ 扩展名白名单（jpg/jpeg/png/gif/webp/bmp/avif）过滤 → 已存在跳过 → 写记录：ObjectKey=Key、size=Size、CreatedAt=LastModified、name=Key basename、original=true；**List 取不到的字段（mime/width/height/hash）留空**（mime=""、尺寸 0、hash=NULL），不做额外读取/解析，导入记录不参与去重。先 `scan`（dry-run）后 `run`。
+- **前端**：Vite+React+MUI，**HTTP 统一 axios**（实例 baseURL `/api`；拦截器：注入 Bearer、401→清 token 跳登录、错误归一化为 `{code,message}`；上传用 FormData + `onUploadProgress` 做逐文件进度）。**首页 = 上传页（极简）**：拖拽/点击/剪贴板粘贴 → 预览区（缩略图网格 + 逐项移除）→ 顶部"原图直存"开关（默认关=压缩）→ 上传（canvas 预压缩见上）→ 结果面板（CDN 预览 + 五格式复制 + 复制全部）。其余页面：**管理**（倒序列表+预览+翻页+单删/批量删+批量复制）、**设置**（迁移导入 scan→run、孤儿清理、R2/域名/缓存/安全）、**仪表盘**（统计）。SPA 路由仅前端代管，后端只处理 `/api/*`；dev 反代见 §7。
 
 ## 4. 数据模型（GORM / SQLite）
 
@@ -47,12 +63,12 @@ type Image struct {
     ID        uint      `gorm:"primaryKey;autoIncrement"` // 操作句柄
     ObjectKey string    `gorm:"uniqueIndex"`              // R2 对象键（导入原键原样）；URL={cdn_host}/{ObjectKey}
     Name      string                                      // 文件名（上传=原始名；导入=键 basename；仅后台可见）
-    Mime      string                                      // 实际存储 MIME
+    Mime      string                                      // 实际存储 MIME（上传有值；导入恒空）
     Size      int64                                       // R2 存储字节数
-    Width     int                                         // 压缩=缩放后；原图=原尺寸；导入默认 0（可 fetch）
+    Width     int                                         // 压缩=缩放后；原图=原尺寸；导入恒 0
     Height    int
-    Hash      []byte    `gorm:"uniqueIndex"`              // SHA-256 原始字节，去重键；可空（导入未 fetch 为 NULL）
-    Original  bool                                        // true=原图直存；false=缩放+WebP；导入默认 true
+    Hash      []byte    `gorm:"uniqueIndex:idx_hash_original"` // SHA-256 原始字节；与 Original 复合唯一，可空（导入恒为 NULL，不参与去重）
+    Original  bool      `gorm:"uniqueIndex:idx_hash_original"` // true=原图直存；false=缩放+WebP；导入默认 true
     CreatedAt time.Time `gorm:"index"`                    // 上传时间/导入=LastModified；倒序排序
 }
 
@@ -64,7 +80,7 @@ type Setting struct {
 ```
 
 - R2 层公开，全量即后台列表，无对外门控。
-- ObjectKey unique 承载 R2 键 → URL 与 CDN 直链一一对应；`hash`=NULL 不参与去重；ID 自增仅供接口操作。
+- ObjectKey unique 承载 R2 键 → URL 与 CDN 直链一一对应；去重按 `(hash, original)` 复合维度（模式须一致）；`hash`=NULL 不参与去重；ID 自增仅供接口操作。
 - 单机上传锁串行化「查重→处理→写 R2→写 DB」；DB 存在即保证 R2 已写入。
 - AutoMigrate 建表。
 
@@ -98,13 +114,14 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 |---|---|---|---|
 | POST | `/api/setup` | 仅 setup | 初始化管理员密码 |
 | POST | `/api/login` | 无 | 密码登录→JWT（IP 封禁兜底） |
+| GET | `/api/status` | 无 | 公开：`{ configured, authed, resize_max_dim, webp_quality, max_upload_bytes }`——SPA 启动守卫 + 前端 canvas 预压缩参数 |
 | POST | `/api/upload` | 上传 Key 或 JWT | multipart `file`+`original`；返回单个 `url` |
 | GET | `/api/admin/images` | 会话 | 倒序分页 `?page=&size=` |
 | GET | `/api/admin/stats` | 会话 | 统计 |
 | POST | `/api/admin/images/delete` | 会话 | 删除 `{ids:[uint]}`（单删=单元素）；按 ID 查 ObjectKey → R2 DeleteObject + 删 DB |
 | POST | `/api/admin/cleanup` | 会话 | 孤儿清理 |
 | GET | `/api/admin/import/scan` | 会话 | 预扫描 dry-run |
-| POST | `/api/admin/import/run` | 会话 | 导入 `{prefix?, fetch_dimensions?}`；只读 |
+| POST | `/api/admin/import/run` | 会话 | 导入 `{prefix?}`；只读（仅 ListObjectsV2） |
 | GET | `/api/admin/settings` | 会话 | 读（secret 掩码） |
 | POST | `/api/admin/settings` | 会话 | 写 |
 | POST | `/api/admin/settings/test-r2` | 会话 | 测试 R2 连接 |
@@ -115,6 +132,7 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 **反代暴露面**：公网放行 `/`（SPA）+ `/api/*`；`/api/admin/*` 整段拦截或仅内网，JWT 第二道防线。
 
 响应：
+- status：`{ configured, authed, resize_max_dim, webp_quality, max_upload_bytes }`（公开，无密钥；`configured`=已设密码，`authed`=当前 Bearer 是否有效）。
 - 上传：`{ id, original, url, size, width, height, mime, created_at }`；≤`max_upload_bytes`，`BodyLimit` 同值；去重命中返回原记录 id/url。
 - 统计：`{ images, total_size, uploads_24h, originals }`。
 - 列表：`{ items:[{ id, objectkey, name, original, mime, size, width, height, created_at, url }], total, page, size }`（size≤100，`url` 供预览）。
@@ -122,7 +140,7 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 - 导入 run：`{ imported, skipped, ignored, errors:[...] }`。
 
 **一致性**：上传 R2 优先（DB 失败补偿删 R2）；删除同步（任一失败报错可重试）。
-**通用性约定**：统一 JSON；**动词只保留 GET/POST——读/查询（幂等）用 GET，写操作（增删改/重置/清理/导入）用 POST**；错误 `{ code, message }`（`config_required`/`auth_failed`/`not_found` 等），状态码 400/401/404/413/429，成功 200；取图地址统一顶层 `url`。
+**通用性约定**：统一 JSON；**动词只保留 GET/POST——读/查询（幂等）用 GET，写操作（增删改/重置/清理/导入）用 POST**；错误 `{ code, message }`（`config_required`/`auth_failed`/`not_found`/`unsupported_type` 等），状态码 400/401/404/413/429，成功 200；取图地址统一顶层 `url`。
 
 ```bash
 curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_key>" -F "file=@image.png"
@@ -147,14 +165,14 @@ danta/
 │   ├── store/                # models(gorm) + images CRUD、分页
 │   ├── storage/storage.go    # 对象存储接口（Put/Delete/List/Get/DeleteBatch）
 │   ├── storage/r2.go         # R2 (S3 兼容) 实现
-│   ├── imageproc/proc.go     # 识别 / 缩放 / WebP 转码（含动画）
+│   ├── imageproc/proc.go     # 识别 / EXIF 方向(imagemeta) / 缩放 / WebP 静态编码 + 动画检测
 │   ├── idgen/idgen.go        # ULID
 │   └── server/               # Fiber v3 路由
 │       ├── middleware/       # auth / rate / ipban
 │       └── handlers/
 ├── web/                      # Vite + React + MUI（开发反代 /api → 后端；build 产物 go:embed）
 │   ├── index.html  vite.config.ts  package.json
-│   └── src/                  # main.tsx App.tsx api/ pages/ components/
+│   └── src/                  # main.tsx App.tsx api/(axios 封装) pages/ components/
 ├── .env.example              # DANTA_LISTEN / DANTA_DATA_DIR
 └── Makefile                  # build / web(dev|build) / test
 ```
@@ -174,10 +192,10 @@ DANTA_DATA_DIR=./data         # SQLite 所在
 
 ## 11. 里程碑
 
-- **M1 骨架**：`.env` + GORM/settings 初始化 + Setup 流程 + proxy_mode/c.IP() + 路由 + R2 连通性 + Vite/React/MUI 脚手架 + dev 反代
-- **M2 上传链路**：上传 Key 鉴权 + magic 识别 + 去重（单机上传锁内）+ **原图直存 / 缩放转 WebP（含动画、解码失败回退）** + 写 R2 + 写 DB + 单 url 外链
+- **M1 骨架**：`.env` + GORM/settings 初始化 + Setup 流程 + `/api/status` + proxy_mode/c.IP() + 路由 + R2 连通性 + Vite/React/MUI + **axios 客户端（拦截器/401/错误归一化）** + dev 反代
+- **M2 上传链路**：上传 Key 鉴权 + magic 白名单校验（非图片 400） + 去重（double-check 锁，按 `(hash, original)` 模式一致）+ **原图直存 / 静态图缩放转 WebP（deepteams/webp + bep/imagemeta EXIF 方向；GIF 与动画回退原图直存；前端 canvas 预压缩直存 WebP 判定）** + 写 R2 + 写 DB + 单 url 外链 + **首页上传页（拖拽/粘贴/预览/原图开关/canvas 预压缩/结果复制）**
 - **M3 管理面**：JWT 会话 + 登录封禁、**倒序列表 + 预览 + 翻页**、单删/批量删除、批量复制、统计仪表盘、上传 Key、设置面板
-- **M4 迁移与打磨**：扫描导入（R2→DB，scan/run、对象键只读保留、可选 fetch 尺寸）、孤儿清理、限流、缓存头校验、README/部署文档（含 ShareX/PicGo web-uploader/uPic 接入配置示例）
+- **M4 迁移与打磨**：扫描导入（R2→DB，scan/run、仅 ListObjectsV2 只读、对象键只读保留）、孤儿清理、限流、缓存头校验、README/部署文档（含 ShareX/PicGo web-uploader/uPic 接入配置示例）
 
 — 各里程碑交付以 `make test`（settings/store/handlers 单测）与 lint 通过为准。
 
