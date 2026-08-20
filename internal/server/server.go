@@ -84,7 +84,9 @@ func spaFallback() fiber.Handler {
 		if err != nil {
 			idx, ierr := webDist.ReadFile("dist/index.html")
 			if ierr != nil {
-				return c.Next()
+				// 前端未构建（仅占位）时的最小页面
+				c.Type("html")
+				return c.SendString(fallbackHTML)
 			}
 			c.Type("html")
 			return c.Send(idx)
@@ -93,6 +95,12 @@ func spaFallback() fiber.Handler {
 		return c.Send(data)
 	}
 }
+
+const fallbackHTML = `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>danta</title></head>
+<body>前端未构建，请运行 make build</body>
+</html>`
 
 func extOf(p string) string {
 	if i := strings.LastIndex(p, "."); i >= 0 {

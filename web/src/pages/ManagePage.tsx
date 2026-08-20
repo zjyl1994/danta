@@ -23,9 +23,9 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import { api } from '../api'
 import type { ImageItem, StatsResp } from '../types'
 import CopyButton from '../components/CopyButton'
-import FormatTabs from '../components/FormatTabs'
+import FormatSelect from '../components/FormatSelect'
 import Lightbox from '../components/Lightbox'
-import { formatLink, Fmt } from '../format'
+import { formatLink, Fmt, loadFormat, saveFormat } from '../format'
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -44,7 +44,7 @@ export default function ManagePage() {
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [fmt, setFmt] = useState<Fmt>('url')
+  const [fmt, setFmt] = useState<Fmt>(() => loadFormat())
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [stats, setStats] = useState<StatsResp | null>(null)
@@ -108,6 +108,10 @@ export default function ManagePage() {
   }
 
   const selectedRows = rows.filter((r) => selected.has(r.id))
+  const changeFmt = (f: Fmt) => {
+    setFmt(f)
+    saveFormat(f)
+  }
   const copyAll = async () => {
     const text = selectedRows.map((r) => formatLink(fmt, r.url, r.name)).join('\n')
     try {
@@ -117,37 +121,39 @@ export default function ManagePage() {
 
   return (
     <Stack spacing={2}>
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" gap={1}>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          图片
-        </Typography>
-        <FormatTabs value={fmt} onChange={setFmt} />
-        <Button size="small" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
-          批量复制
-        </Button>
-        <Button size="small" color="error" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
-          批量删除
-        </Button>
+      <Stack spacing={1}>
+        <Typography variant="h6">图片</Typography>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
+          <FormatSelect value={fmt} onChange={changeFmt} />
+          <Button size="small" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
+            批量复制
+          </Button>
+          <Button size="small" color="error" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
+            批量删除
+          </Button>
+        </Stack>
       </Stack>
 
       {stats && (
-        <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 2 }}>
           {[
-            { l: '图片总数', v: String(stats.images) },
-            { l: '总存储', v: fmtBytes(stats.total_size) },
-            { l: '近 24h 新增', v: String(stats.uploads_24h) },
-            { l: '原图总数', v: String(stats.originals) }
+            { l: '图片', v: String(stats.images) },
+            { l: '存储', v: fmtBytes(stats.total_size) },
+            { l: '24h 新增', v: String(stats.uploads_24h) },
+            { l: '原图', v: String(stats.originals) }
           ].map((c) => (
-            <Card variant="outlined" sx={{ flex: '1 1 160px', minWidth: 140 }}>
-              <CardContent sx={{ py: 1.5 }}>
-                <Typography variant="body2" color="text.secondary">
+            <Card variant="outlined" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 1 }}>
+                <Typography variant="body2" color="text.secondary" noWrap>
                   {c.l}
                 </Typography>
-                <Typography variant="h6">{c.v}</Typography>
+                <Typography variant="h6" fontWeight={700} noWrap>
+                  {c.v}
+                </Typography>
               </CardContent>
             </Card>
           ))}
-        </Stack>
+        </Box>
       )}
 
       {error && <Alert severity="error">{error}</Alert>}

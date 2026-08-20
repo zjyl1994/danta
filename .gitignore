@@ -31,7 +31,11 @@ go.work.sum
 bin/
 web/node_modules/
 web/dist/
-internal/server/dist/assets/
+web/tsconfig.tsbuildinfo
+
+# go:embed 前端产物（仅保留占位文件，其余忽略）
+internal/server/dist/*
+!internal/server/dist/placeholder.txt
 data/
 
 # Editor/IDE

@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Collapse from '@mui/material/Collapse'
 import Divider from '@mui/material/Divider'
 import Drawer from '@mui/material/Drawer'
-import Fab from '@mui/material/Fab'
+import IconButton from '@mui/material/IconButton'
 import List from '@mui/material/List'
 import ListItemButton from '@mui/material/ListItemButton'
 import ListItemIcon from '@mui/material/ListItemIcon'
@@ -109,7 +110,19 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
   )
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' } }}>
+      {/* 移动端顶栏（文档流内，不悬浮；桌面端隐藏） */}
+      <AppBar position="static" sx={{ display: { md: 'none' } }}>
+        <Toolbar>
+          <IconButton color="inherit" edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }}>
+            <MenuIcon />
+          </IconButton>
+          <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
+            蛋挞图床
+          </Typography>
+        </Toolbar>
+      </AppBar>
+
       <Box component="nav" sx={{ width: { md: DRAWER_WIDTH }, flexShrink: { md: 0 } }}>
         <Drawer
           variant="temporary"
@@ -129,18 +142,7 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
         </Drawer>
       </Box>
 
-      {/* 移动端浮动菜单按钮（无顶部标题栏） */}
-      <Fab
-        size="small"
-        color="primary"
-        aria-label="menu"
-        sx={{ position: 'fixed', top: 12, left: 12, zIndex: 1200, display: { md: 'none' } }}
-        onClick={() => setMobileOpen(true)}
-      >
-        <MenuIcon />
-      </Fab>
-
-      <Box component="main" sx={{ flexGrow: 1, width: '100%', pt: { xs: 6, sm: 3 }, px: { xs: 1, sm: 3 }, maxWidth: 1200, mx: 'auto' }}>
+      <Box component="main" sx={{ flexGrow: 1, width: '100%', p: { xs: 1.5, sm: 3 }, maxWidth: 1200, mx: 'auto' }}>
         {children}
       </Box>
     </Box>
