@@ -119,13 +119,13 @@ export default function ManagePage() {
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" gap={1}>
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          图片列表
+          图片
         </Typography>
         <FormatTabs value={fmt} onChange={setFmt} />
-        <Button size="small" variant="outlined" disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
+        <Button size="small" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
           批量复制
         </Button>
-        <Button size="small" color="error" variant="outlined" disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
+        <Button size="small" color="error" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
           批量删除
         </Button>
       </Stack>
@@ -136,7 +136,7 @@ export default function ManagePage() {
             { l: '图片总数', v: String(stats.images) },
             { l: '总存储', v: fmtBytes(stats.total_size) },
             { l: '近 24h 新增', v: String(stats.uploads_24h) },
-            { l: '原图直存', v: String(stats.originals) }
+            { l: '原图总数', v: String(stats.originals) }
           ].map((c) => (
             <Card variant="outlined" sx={{ flex: '1 1 160px', minWidth: 140 }}>
               <CardContent sx={{ py: 1.5 }}>

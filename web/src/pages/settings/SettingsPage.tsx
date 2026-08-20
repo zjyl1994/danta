@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Alert, Box, Button, Card, CardContent, Divider, Grid, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import CopyButton from '../../components/CopyButton'
 import { api } from '../../api'
 import { useSettingsCtx } from './context'
 import type { RunResp, ScanResp } from '../../types'
@@ -86,7 +87,7 @@ function StorageCard() {
 
 // 安全：反向代理 / 密码 / 登录防爆破 / 上传 Key
 function SecurityCard() {
-  const { s, uploadKey, update, save, changePassword, resetUploadKey } = useSettingsCtx()
+  const { s, update, save, changePassword } = useSettingsCtx()
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
@@ -193,9 +194,33 @@ function SecurityCard() {
               <Button variant="contained" sx={{ alignSelf: 'flex-end' }} onClick={() => void save()}>保存</Button>
             </Stack>
           </Box>
+        </Stack>
+      </CardContent>
+    </Card>
+  )
+}
 
-          <Divider />
+// API：上传 Key 管理 + 上传接口示例
+function ApiCard() {
+  const { uploadKey, resetUploadKey } = useSettingsCtx()
+  const origin = window.location.origin
+  const key = uploadKey || '<upload_key>'
 
+  const examples = [
+    {
+      title: '压缩模式上传（默认：缩放 + WebP）',
+      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${key}" -F "file=@image.png"`
+    },
+    {
+      title: '原图直存上传',
+      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${key}" -F "file=@image.png" -F "original=true"`
+    }
+  ]
+
+  return (
+    <Card>
+      <CardContent>
+        <Stack spacing={3}>
           <Box>
             <Typography variant="subtitle1" gutterBottom>
               上传 Key
@@ -218,6 +243,37 @@ function SecurityCard() {
               </Stack>
             </Stack>
           </Box>
+
+          <Divider />
+
+          <Box>
+            <Typography variant="subtitle1" gutterBottom>
+              上传接口示例（curl）
+            </Typography>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              使用上方上传 Key 作为 Bearer；multipart 仅需 <code>file</code> 字段。
+            </Typography>
+            <Stack spacing={2}>
+              {examples.map((ex) => (
+                <Box key={ex.title}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                    <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                      {ex.title}
+                    </Typography>
+                    <CopyButton text={ex.cmd} label="复制命令" />
+                  </Stack>
+                  <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#0d1117' }}>
+                    <Typography
+                      component="pre"
+                      sx={{ m: 0, color: '#e6edf3', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace' }}
+                    >
+                      {ex.cmd}
+                    </Typography>
+                  </Paper>
+                </Box>
+              ))}
+            </Stack>
+          </Box>
         </Stack>
       </CardContent>
     </Card>
@@ -231,21 +287,29 @@ function MigrateCard() {
   const [run, setRun] = useState<RunResp | null>(null)
   const [err, setErr] = useState('')
   const [cleanup, setCleanup] = useState<{ deleted: number; skipped_grace: number } | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const doScan = async () => {
+  // 扫描（dry-run）→ 弹确认框 → 确认后导入
+  const doScanAndConfirm = async () => {
     setErr('')
     setRun(null)
+    setBusy(true)
     try {
       const r = await api.get<ScanResp>('/admin/import/scan', { params: { prefix } })
       setScan(r.data)
+      setDialogOpen(true)
     } catch (e: any) {
       setErr(e.message)
+    } finally {
+      setBusy(false)
     }
   }
 
   const doImport = async () => {
     if (!scan) return
-    if (!window.confirm(`确认导入 ${scan.new} 个新对象？（仅读取 R2 列表，不下载对象内容）`)) return
+    setDialogOpen(false)
+    setErr('')
     try {
       const r = await api.post<RunResp>('/admin/import/run', { prefix })
       setRun(r.data)
@@ -278,43 +342,13 @@ function MigrateCard() {
             </Typography>
             <Stack spacing={1} sx={{ mb: 2 }}>
               <TextField label="Prefix（可选）" value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="例如 2023/08/" fullWidth />
-              <Stack direction="row" justifyContent="flex-end" spacing={1}>
-                <Button variant="outlined" onClick={() => void doScan()}>扫描预览</Button>
-                <Button variant="contained" disabled={!scan} onClick={() => void doImport()}>执行导入</Button>
+              <Stack direction="row" justifyContent="flex-end">
+                <Button variant="contained" disabled={busy} onClick={() => void doScanAndConfirm()}>
+                  {busy ? '扫描中…' : '扫描并导入'}
+                </Button>
               </Stack>
             </Stack>
             {err && <Alert severity="error">{err}</Alert>}
-            {scan && (
-              <Stack spacing={1}>
-                <Typography variant="body2">
-                  共 {scan.total} 个对象 · 新增 {scan.new} · 已存在 {scan.existing} · 忽略 {scan.ignored}
-                </Typography>
-                {scan.items.length > 0 && (
-                  <TableContainer component={Box} sx={{ maxHeight: 240, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Key</TableCell>
-                          <TableCell>Size</TableCell>
-                          <TableCell>LastModified</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {scan.items.map((i) => (
-                          <TableRow key={i.key}>
-                            <TableCell sx={{ maxWidth: 320 }}>
-                              <Typography noWrap variant="body2">{i.key}</Typography>
-                            </TableCell>
-                            <TableCell>{i.size}</TableCell>
-                            <TableCell>{i.last_modified}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                )}
-              </Stack>
-            )}
             {run && (
               <Alert severity="success" sx={{ mt: 1 }}>
                 导入完成：新增 {run.imported} · 跳过 {run.skipped} · 忽略 {run.ignored}
@@ -343,6 +377,50 @@ function MigrateCard() {
           </Box>
         </Stack>
       </CardContent>
+
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>确认导入</DialogTitle>
+        <DialogContent dividers>
+          {scan && (
+            <Stack spacing={1}>
+              <Typography variant="body2">
+                共 {scan.total} 个对象 · 新增 <b>{scan.new}</b> · 已存在 {scan.existing} · 忽略 {scan.ignored}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                仅读取 R2 列表，不下载对象内容；确认后将写入 {scan.new} 条记录。
+              </Typography>
+              {scan.items.length > 0 && (
+                <TableContainer component={Box} sx={{ maxHeight: 280, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Key</TableCell>
+                        <TableCell>Size</TableCell>
+                        <TableCell>LastModified</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {scan.items.map((i) => (
+                        <TableRow key={i.key}>
+                          <TableCell sx={{ maxWidth: 280 }}>
+                            <Typography noWrap variant="body2">{i.key}</Typography>
+                          </TableCell>
+                          <TableCell>{i.size}</TableCell>
+                          <TableCell>{i.last_modified}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDialogOpen(false)}>取消</Button>
+          <Button variant="contained" onClick={() => void doImport()}>导入 {scan?.new ?? 0} 个</Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   )
 }
@@ -359,6 +437,7 @@ export default function SettingsPage() {
       <Banner />
       {section === 'storage' && <StorageCard />}
       {section === 'security' && <SecurityCard />}
+      {section === 'api' && <ApiCard />}
       {section === 'migrate' && <MigrateCard />}
     </Stack>
   )

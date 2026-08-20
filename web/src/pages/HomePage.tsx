@@ -87,6 +87,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
   const [results, setResults] = useState<Result[]>([])
   const [original, setOriginal] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [globalDrag, setGlobalDrag] = useState(false)
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -114,14 +115,64 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
     })
   }
 
-  const onPaste = (e: React.ClipboardEvent) => {
-    const files = e.clipboardData?.files
-    if (files && files.length) addFiles(files)
-  }
+  const addFilesRef = useRef<(files: FileList | File[]) => void>(() => {})
+  addFilesRef.current = addFiles
+
+  // 全屏粘贴 / 拖拽导入（document 级，任意位置）
+  useEffect(() => {
+    let depth = 0
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types?.includes('Files')
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      depth++
+      setGlobalDrag(true)
+    }
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+    }
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setGlobalDrag(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      depth = 0
+      setGlobalDrag(false)
+      if (e.dataTransfer?.files?.length) addFilesRef.current(e.dataTransfer.files)
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      const files = e.clipboardData?.files
+      if (files && files.length) {
+        e.preventDefault()
+        addFilesRef.current(files)
+      }
+    }
+    document.addEventListener('dragenter', onDragEnter)
+    document.addEventListener('dragover', onDragOver)
+    document.addEventListener('dragleave', onDragLeave)
+    document.addEventListener('drop', onDrop)
+    document.addEventListener('paste', onPaste)
+    return () => {
+      document.removeEventListener('dragenter', onDragEnter)
+      document.removeEventListener('dragover', onDragOver)
+      document.removeEventListener('dragleave', onDragLeave)
+      document.removeEventListener('drop', onDrop)
+      document.removeEventListener('paste', onPaste)
+    }
+  }, [])
 
   const removeItem = (id: number) => setItems((arr) => arr.filter((i) => i.id !== id))
 
   const uploadOne = async (item: Item, originalFlag: boolean) => {
+    if (item.file.size > cfg.max_upload_bytes) {
+      setItems((arr) => arr.map((i) => (i.id === item.id ? { ...i, status: 'error', error: '超过大小限制' } : i)))
+      return
+    }
     setItems((arr) => arr.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 0, error: undefined } : i)))
     let payload = item.file
     if (!originalFlag) {
@@ -175,7 +226,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
   }
 
   return (
-    <Stack spacing={2} onPaste={onPaste}>
+    <Stack spacing={2}>
       <Stack direction="row" spacing={2} alignItems="center">
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
           上传
@@ -311,6 +362,28 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
             </Stack>
           </CardContent>
         </Card>
+      )}
+
+      {globalDrag && (
+        <Box
+          sx={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1300,
+            bgcolor: 'rgba(0,0,0,0.25)',
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '3px dashed',
+            borderColor: 'primary.main',
+            boxSizing: 'border-box'
+          }}
+        >
+          <Typography variant="h5" sx={{ color: '#fff', bgcolor: 'rgba(0,0,0,0.55)', px: 3, py: 1, borderRadius: 2 }}>
+            松开以导入图片
+          </Typography>
+        </Box>
       )}
     </Stack>
   )

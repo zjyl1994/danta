@@ -19,19 +19,24 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary'
 import SettingsIcon from '@mui/icons-material/Settings'
 import LogoutIcon from '@mui/icons-material/Logout'
+import StorageIcon from '@mui/icons-material/Storage'
+import SecurityIcon from '@mui/icons-material/Security'
+import ApiIcon from '@mui/icons-material/Api'
+import DownloadIcon from '@mui/icons-material/Download'
 import { clearToken } from '../api'
 
 const DRAWER_WIDTH = 220
 
 const TOP_ITEMS = [
   { p: '/', l: '上传', icon: <CloudUploadIcon /> },
-  { p: '/manage', l: '图片列表', icon: <PhotoLibraryIcon /> }
+  { p: '/manage', l: '图片', icon: <PhotoLibraryIcon /> }
 ]
 
 const SETTINGS_CHILDREN = [
-  { p: '/settings/storage', l: '存储与域名' },
-  { p: '/settings/security', l: '安全' },
-  { p: '/settings/migrate', l: '迁移维护' }
+  { p: '/settings/storage', l: '存储', icon: <StorageIcon /> },
+  { p: '/settings/security', l: '安全', icon: <SecurityIcon /> },
+  { p: '/settings/api', l: 'API', icon: <ApiIcon /> },
+  { p: '/settings/migrate', l: '迁移', icon: <DownloadIcon /> }
 ]
 
 export default function Layout({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
@@ -81,8 +86,9 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
                 key={i.p}
                 selected={loc.pathname === i.p}
                 onClick={() => goto(i.p)}
-                sx={{ pl: 5 }}
+                sx={{ pl: 4 }}
               >
+                <ListItemIcon sx={{ minWidth: 32 }}>{i.icon}</ListItemIcon>
                 <ListItemText primary={i.l} />
               </ListItemButton>
             ))}

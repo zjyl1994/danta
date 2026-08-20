@@ -4,13 +4,19 @@ import CircularProgress from '@mui/material/CircularProgress'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { api } from './api'
 import type { StatusResp } from './types'
+import Layout from './components/Layout'
 import SetupPage from './pages/SetupPage'
 import LoginPage from './pages/LoginPage'
-import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
 import ManagePage from './pages/ManagePage'
 import SettingsPage from './pages/settings/SettingsPage'
 import { SettingsProvider } from './pages/settings/context'
+
+const Spinner = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+    <CircularProgress />
+  </Box>
+)
 
 export default function App() {
   const [state, setState] = useState<{ loaded: boolean; configured: boolean; authed: boolean; cfg: StatusResp | null }>({
@@ -28,17 +34,14 @@ export default function App() {
   }, [])
 
   if (!state.loaded) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
-      </Box>
-    )
+    return <Spinner />
   }
+
   if (!state.configured) {
     return <SetupPage />
   }
   if (!state.authed) {
-    return <LoginPage onSuccess={() => setState({ ...state, authed: true })} />
+    return <LoginPage onSuccess={() => setState((s) => ({ ...s, authed: true }))} />
   }
 
   return (
