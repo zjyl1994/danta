@@ -55,7 +55,7 @@ func envOr(k, def string) string {
 
 func main() {
 	loadDotEnv()
-	// 新建文件默认 0600/0700，防止 db（含 master_secret、upload_key、R2 Secret）被同机其他用户读取
+	// 新建文件默认 0600/0700，防止 db（含 master_secret、R2 Secret）被同机其他用户读取
 	syscall.Umask(0o077)
 
 	listen := envOr("DANTA_LISTEN", "127.0.0.1:8080")

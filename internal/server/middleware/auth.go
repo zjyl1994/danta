@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"strings"
 	"time"
 
@@ -9,6 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/zjyl1994/danta/internal/settings"
+	"github.com/zjyl1994/danta/internal/store"
 )
 
 func bearerToken(c fiber.Ctx) string {
@@ -54,14 +54,6 @@ func IsAdmin(c fiber.Ctx, st *settings.Manager) bool {
 	return validJWT(bearerToken(c), s.MasterSecret)
 }
 
-// IsUploadKey 校验上传 Key
-func isUploadKey(tok, key string) bool {
-	if tok == "" || key == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(tok), []byte(key)) == 1
-}
-
 func unauthorized(c fiber.Ctx) error {
 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 		"code":    "auth_failed",
@@ -79,15 +71,23 @@ func AdminAuth(st *settings.Manager) fiber.Handler {
 	}
 }
 
-// UploadAuth 上传中间件：上传 Key 或管理员 JWT 二选一
-func UploadAuth(st *settings.Manager) fiber.Handler {
+// UploadAuth 上传中间件：管理员 JWT 或有效上传令牌二选一
+func UploadAuth(st *settings.Manager, stg *store.Store) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		s := st.Get()
 		tok := bearerToken(c)
-		if !isUploadKey(tok, s.UploadKey) && !validJWT(tok, s.MasterSecret) {
-			return unauthorized(c)
+		if validJWT(tok, s.MasterSecret) {
+			return c.Next()
 		}
-		return c.Next()
+		if tok != "" && stg != nil {
+			t, err := stg.TokenByHash(store.TokenHash(tok))
+			if err == nil && t != nil && t.Kind == "upload" && t.RevokedAt == nil &&
+				(t.ExpiresAt == nil || time.Now().Before(*t.ExpiresAt)) {
+				_ = stg.MarkTokenUsed(t.ID)
+				return c.Next()
+			}
+		}
+		return unauthorized(c)
 	}
 }
 

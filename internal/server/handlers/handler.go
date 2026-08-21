@@ -13,8 +13,13 @@ import (
 	"github.com/zjyl1994/danta/internal/store"
 )
 
-// jwtTTL 管理员 JWT 有效期
-const jwtTTL = 7 * 24 * time.Hour
+// accessTTL 访问令牌（管理员 JWT）有效期；过期后前端用 refresh token 静默续期
+const accessTTL = time.Hour
+
+// sessionTTL 当前配置的登录会话（refresh token）时长
+func (h *Handler) sessionTTL() time.Duration {
+	return time.Duration(h.Settings.Get().SessionTTL) * 24 * time.Hour
+}
 
 // StorageProvider 按 settings 提供对象存储实例（生产=R2 Provider，测试可注入假实现）
 type StorageProvider interface {

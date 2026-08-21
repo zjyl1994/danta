@@ -1,14 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { api } from '../../api'
 import { AppCtx } from '../../App'
-import type { SettingsResp } from '../../types'
+import type { NewTokenResp, SessionItem, SettingsResp } from '../../types'
 
 interface SettingsCtx {
   s: SettingsResp | null
   secret: string
   msg: string
   err: string
-  uploadKey: string
+  sessions: SessionItem[]
   setSecret: (v: string) => void
   setMsg: (v: string) => void
   setErr: (v: string) => void
@@ -16,7 +16,9 @@ interface SettingsCtx {
   save: () => Promise<void>
   testR2: () => Promise<void>
   changePassword: (oldPw: string, newPw: string) => Promise<void>
-  resetUploadKey: () => Promise<void>
+  loadSessions: () => Promise<void>
+  createUploadToken: (name: string, days: number) => Promise<NewTokenResp>
+  revokeSession: (id: number) => Promise<void>
 }
 
 const Ctx = createContext<SettingsCtx | null>(null)
@@ -32,7 +34,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [secret, setSecret] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [uploadKey, setUploadKey] = useState('')
+  const [sessions, setSessions] = useState<SessionItem[]>([])
   const { refresh } = useContext(AppCtx)
 
   const load = useCallback(async () => {
@@ -45,13 +47,19 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const loadSessions = useCallback(async () => {
+    try {
+      const r = await api.get<{ sessions: SessionItem[] }>('/admin/sessions')
+      setSessions(r.data.sessions)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   useEffect(() => {
     void load()
-    void api
-      .get<{ upload_key: string }>('/admin/upload-key')
-      .then((r) => setUploadKey(r.data.upload_key))
-      .catch(() => {})
-  }, [load])
+    void loadSessions()
+  }, [load, loadSessions])
 
   const update = (k: keyof SettingsResp, v: number | string) => setS((p) => (p ? { ...p, [k]: v } : p))
 
@@ -72,6 +80,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       login_fail_limit: s.login_fail_limit,
       login_fail_window: s.login_fail_window,
       login_ban_seconds: s.login_ban_seconds,
+      session_ttl: s.session_ttl,
       background_image: s.background_image
     }
     if (secret) body.r2_secret_access_key = secret
@@ -108,12 +117,27 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const resetUploadKey = async () => {
-    if (!window.confirm('重置后旧的上传密钥将立即失效，确认继续？')) return
+  const createUploadToken = async (name: string, days: number) => {
+    setErr('')
+    setMsg('')
     try {
-      const r = await api.post<{ upload_key: string }>('/admin/upload-key')
-      setUploadKey(r.data.upload_key)
-      setMsg('上传密钥已重置')
+      const r = await api.post<NewTokenResp>('/admin/tokens', { name, days })
+      await loadSessions()
+      setMsg('令牌已创建，请立即复制保存（仅显示一次）')
+      return r.data
+    } catch (e: any) {
+      setErr(e.message)
+      throw e
+    }
+  }
+
+  const revokeSession = async (id: number) => {
+    setErr('')
+    setMsg('')
+    try {
+      await api.post(`/admin/sessions/${id}/revoke`)
+      await loadSessions()
+      setMsg('已吊销')
     } catch (e: any) {
       setErr(e.message)
     }
@@ -121,7 +145,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider
-      value={{ s, secret, msg, err, uploadKey, setSecret, setMsg, setErr, update, save, testR2, changePassword, resetUploadKey }}
+      value={{
+        s, secret, msg, err, sessions,
+        setSecret, setMsg, setErr,
+        update, save, testR2, changePassword,
+        loadSessions, createUploadToken, revokeSession
+      }}
     >
       {children}
     </Ctx.Provider>

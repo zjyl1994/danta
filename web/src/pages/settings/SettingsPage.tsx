@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from '@mui/material'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import DeleteIcon from '@mui/icons-material/Delete'
 import CopyButton from '../../components/CopyButton'
+import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api } from '../../api'
 import { copyText } from '../../clipboard'
 import { useSettingsCtx } from './context'
-import type { ImageItem, RunResp, ScanResp } from '../../types'
+import type { ImageItem, NewTokenResp, RunResp, ScanResp, SessionItem } from '../../types'
 
 const CACHE_OPTIONS = [
   { v: 3600, l: '1 小时' },
@@ -16,6 +18,18 @@ const CACHE_OPTIONS = [
   { v: 2592000, l: '30 天' },
   { v: 31536000, l: '1 年' }
 ]
+
+function fmtTime(s: string | null | undefined): string {
+  if (!s) return '--'
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? s : d.toLocaleString()
+}
+
+function tokenStatus(it: Pick<SessionItem, 'expires_at' | 'revoked_at'>): { label: string; color: 'default' | 'success' | 'warning' | 'error' } {
+  if (it.revoked_at) return { label: '已吊销', color: 'error' }
+  if (it.expires_at && new Date(it.expires_at).getTime() < Date.now()) return { label: '已过期', color: 'warning' }
+  return { label: '有效', color: 'success' }
+}
 
 function Banner() {
   const { msg, err } = useSettingsCtx()
@@ -86,14 +100,15 @@ function StorageCard() {
   )
 }
 
-// 安全：反向代理 / 密码 / 登录防爆破 / 上传 Key
+// 安全：反向代理 / 密码 / 登录防爆破 / 登录设备
 function SecurityCard() {
-  const { s, update, save, changePassword } = useSettingsCtx()
+  const { s, update, save, changePassword, sessions, loadSessions, revokeSession } = useSettingsCtx()
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
   const [pwErr, setPwErr] = useState('')
   const [ip, setIp] = useState('')
+  const { confirm, dialog } = useConfirmDialog()
 
   // 实时显示当前请求 IP：模式切换时立即刷新，且每 3 秒轮询一次
   const proxyMode = s?.proxy_mode ?? 'none'
@@ -120,6 +135,18 @@ function SecurityCard() {
     setNewPw('')
     setNewPw2('')
   }
+
+  const doRevoke = async (it: SessionItem) => {
+    const current = it.kind === 'login'
+    if (!(await confirm({
+      title: current ? '吊销设备' : '吊销令牌',
+      description: current ? `吊销设备「${it.name}」？此操作会使其立即退出登录。` : `吊销「${it.name}」？此操作会使其立即失效。`,
+      confirmLabel: '吊销'
+    }))) return
+    await revokeSession(it.id)
+  }
+
+  const loginSessions = sessions.filter((x) => x.kind === 'login')
 
   return (
     <Box>
@@ -190,31 +217,121 @@ function SecurityCard() {
               <Grid item xs={12} sm={4}>
                 <TextField label="暂停时长（秒）" type="number" value={s.login_ban_seconds} onChange={(e) => update('login_ban_seconds', Math.max(1, parseInt(e.target.value || '900', 10)))} fullWidth />
               </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField label="会话有效期（天）" type="number" value={s.session_ttl} onChange={(e) => update('session_ttl', Math.max(1, parseInt(e.target.value || '30', 10)))} fullWidth helperText="设备在有效期内会静默续期" />
+              </Grid>
             </Grid>
             <Stack justifyContent="flex-end" sx={{ mt: 2 }}>
               <Button variant="contained" sx={{ alignSelf: 'flex-end' }} onClick={() => void save()}>保存</Button>
             </Stack>
           </Box>
+
+          <Divider />
+
+          <Box>
+            <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
+              <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+                已登录设备
+              </Typography>
+              <Button size="small" onClick={() => void loadSessions()}>刷新</Button>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              登录会话在有效期内自动续期；吊销后该设备下次访问将需要重新登录。设备丢失或不用时请及时吊销。
+            </Typography>
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>设备</TableCell>
+                    <TableCell>创建时间</TableCell>
+                    <TableCell>最后活跃</TableCell>
+                    <TableCell>到期</TableCell>
+                    <TableCell>状态</TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {loginSessions.map((it) => {
+                    const st = tokenStatus(it)
+                    return (
+                      <TableRow key={it.id} hover>
+                        <TableCell sx={{ maxWidth: 200 }}>
+                          <Typography noWrap title={it.name}>{it.name}</Typography>
+                        </TableCell>
+                        <TableCell>{fmtTime(it.created_at)}</TableCell>
+                        <TableCell>{fmtTime(it.last_used_at)}</TableCell>
+                        <TableCell>{fmtTime(it.expires_at)}</TableCell>
+                        <TableCell>
+                          <Chip size="small" color={st.color} label={st.label} />
+                        </TableCell>
+                        <TableCell>
+                          <IconButton size="small" color="error" disabled={!!it.revoked_at} onClick={() => void doRevoke(it)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {loginSessions.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                        暂无登录设备
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
         </Stack>
       </Box>
+      {dialog}
     </Box>
   )
 }
 
-// API：上传 Key 管理 + 上传接口示例
+// API：上传令牌管理 + 上传接口示例
 function ApiCard() {
-  const { uploadKey, resetUploadKey } = useSettingsCtx()
+  const { sessions, createUploadToken, revokeSession } = useSettingsCtx()
   const origin = window.location.origin
-  const key = uploadKey || '<upload_key>'
+  const uploads = sessions.filter((x) => x.kind === 'upload')
 
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [days, setDays] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState<NewTokenResp | null>(null)
+  const { confirm, dialog } = useConfirmDialog()
+
+  const doCreate = async () => {
+    setBusy(true)
+    try {
+      const d = days.trim() === '' ? 0 : Math.max(0, parseInt(days, 10) || 0)
+      const res = await createUploadToken(name, d)
+      setCreated(res)
+      setName('')
+      setDays('')
+    } catch {
+      /* err shown by context */
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doRevoke = async (it: SessionItem) => {
+    if (!(await confirm({ title: '吊销上传令牌', description: `吊销「${it.name}」？此操作会使其立即失效。`, confirmLabel: '吊销' }))) return
+    await revokeSession(it.id)
+  }
+
+  const exampleToken = '<upload_token>'
   const examples = [
     {
       title: '自动压缩后上传（默认）',
-      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${key}" -F "file=@image.png"`
+      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${exampleToken}" -F "file=@image.png"`
     },
     {
       title: '保留原图上传',
-      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${key}" -F "file=@image.png" -F "original=true"`
+      cmd: `curl -X POST ${origin}/api/upload -H "Authorization: Bearer ${exampleToken}" -F "file=@image.png" -F "original=true"`
     }
   ]
 
@@ -223,25 +340,61 @@ function ApiCard() {
       <Box>
         <Stack spacing={3}>
           <Box>
-            <Typography variant="subtitle1" gutterBottom>
-              上传密钥
-            </Typography>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              用于通过命令行等工具上传图片，等同于您的上传权限，请妥善保管。
-            </Typography>
-            <Stack spacing={1}>
-              <TextField value={uploadKey} fullWidth disabled />
-              <Stack direction="row" justifyContent="flex-end" spacing={1}>
-                <Button
-                  variant="outlined"
-                  startIcon={<ContentCopyIcon />}
-                  onClick={() => void copyText(uploadKey)}
-                >
-                  复制密钥
-                </Button>
-                <Button variant="outlined" color="error" onClick={() => void resetUploadKey()}>重置</Button>
-              </Stack>
+            <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
+              <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+                上传令牌
+              </Typography>
+              <Button size="small" variant="contained" onClick={() => { setCreated(null); setOpen(true) }}>
+                创建令牌
+              </Button>
             </Stack>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              用于通过命令行等工具上传图片，等同于您的上传权限，请妥善保管。令牌只显示一次，丢失后需重新创建。
+            </Typography>
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>名称</TableCell>
+                    <TableCell>创建时间</TableCell>
+                    <TableCell>最后使用</TableCell>
+                    <TableCell>到期</TableCell>
+                    <TableCell>状态</TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {uploads.map((it) => {
+                    const st = tokenStatus(it)
+                    return (
+                      <TableRow key={it.id} hover>
+                        <TableCell sx={{ maxWidth: 200 }}>
+                          <Typography noWrap title={it.name}>{it.name}</Typography>
+                        </TableCell>
+                        <TableCell>{fmtTime(it.created_at)}</TableCell>
+                        <TableCell>{fmtTime(it.last_used_at)}</TableCell>
+                        <TableCell>{fmtTime(it.expires_at)}</TableCell>
+                        <TableCell>
+                          <Chip size="small" color={st.color} label={st.label} />
+                        </TableCell>
+                        <TableCell>
+                          <IconButton size="small" color="error" disabled={!!it.revoked_at} onClick={() => void doRevoke(it)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {uploads.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                        暂无上传令牌
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Box>
 
           <Divider />
@@ -251,7 +404,7 @@ function ApiCard() {
               命令行上传示例
             </Typography>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              使用上方密钥作为口令；命令行仅需 <code>file</code> 一个字段。
+              使用上方令牌作为口令；命令行仅需 <code>file</code> 一个字段。
             </Typography>
             <Stack spacing={2}>
               {examples.map((ex) => (
@@ -276,6 +429,54 @@ function ApiCard() {
           </Box>
         </Stack>
       </Box>
+
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{created ? '令牌已创建' : '创建上传令牌'}</DialogTitle>
+        <DialogContent dividers>
+          {created ? (
+            <Stack spacing={1}>
+              <Alert severity="warning">令牌仅显示这一次，请立即复制保存。关闭后无法再次查看。</Alert>
+              <TextField value={created.token} fullWidth disabled />
+              <Stack direction="row" justifyContent="flex-end" spacing={1}>
+                <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={() => void copyText(created.token)}>
+                  复制令牌
+                </Button>
+                <Button variant="contained" onClick={() => setCreated(null)}>再创建一个</Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <Stack spacing={2}>
+              <TextField
+                label="名称"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：命令行 / CI / 手机快捷指令"
+                fullWidth
+              />
+              <TextField
+                label="有效期（天）"
+                type="number"
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                placeholder="留空表示永不过期"
+                fullWidth
+              />
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {!created && (
+            <>
+              <Button onClick={() => setOpen(false)}>取消</Button>
+              <Button variant="contained" disabled={busy} onClick={() => void doCreate()}>
+                {busy ? '创建中…' : '创建'}
+              </Button>
+            </>
+          )}
+          {created && <Button onClick={() => setOpen(false)}>完成</Button>}
+        </DialogActions>
+      </Dialog>
+      {dialog}
     </Box>
   )
 }
@@ -412,6 +613,7 @@ function MigrateCard() {
   const [cleanup, setCleanup] = useState<{ deleted: number; skipped_grace: number } | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const { confirm, dialog } = useConfirmDialog()
 
   // 扫描（dry-run）→ 弹确认框 → 确认后导入
   const doScanAndConfirm = async () => {
@@ -443,7 +645,11 @@ function MigrateCard() {
 
   const doCleanup = async () => {
     setErr('')
-    if (!window.confirm('确认执行清理？将删除系统中没有记录、且不是近期上传的图片。')) return
+    if (!(await confirm({
+      title: '清理无用图片',
+      description: '确认执行清理？将删除系统中没有记录、且不是近期上传的图片。',
+      confirmLabel: '立即清理'
+    }))) return
     try {
       const r = await api.post<{ deleted: number; skipped_grace: number }>('/admin/cleanup')
       setCleanup(r.data)
@@ -544,6 +750,7 @@ function MigrateCard() {
           <Button variant="contained" onClick={() => void doImport()}>导入 {scan?.new ?? 0} 个</Button>
         </DialogActions>
       </Dialog>
+      {dialog}
     </Box>
   )
 }

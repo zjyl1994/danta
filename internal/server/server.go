@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
 
 	"github.com/zjyl1994/danta/internal/server/handlers"
 	"github.com/zjyl1994/danta/internal/server/middleware"
@@ -39,15 +40,19 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 		BodyLimit: 64 * 1024 * 1024, // 硬上限，实际大小由 handler 按配置校验
 		AppName:   "danta",
 	})
+	// 协商压缩嵌入式 SPA 资源和较大的 API 响应；图片由对象存储/CDN 提供，不经过此应用。
+	app.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
 
 	// 公开
 	app.Get("/api/status", h.Status)
 	app.Post("/api/login", middleware.BanGuard(h.Ban, st), middleware.NewRate(30, time.Minute, mode).Handler, h.Login)
 	app.Post("/api/setup", middleware.BanGuard(h.Ban, st), middleware.NewRate(30, time.Minute, mode).Handler, h.Setup)
+	app.Post("/api/refresh", h.Refresh)
+	app.Post("/api/logout", h.Logout)
 
-	// 上传：上传 Key 或管理员 JWT
+	// 上传：有效上传令牌或管理员 JWT
 	app.Post("/api/upload",
-		middleware.UploadAuth(st),
+		middleware.UploadAuth(st, h.Store),
 		middleware.NewRate(120, time.Minute, mode).Handler,
 		h.Upload,
 	)
@@ -63,8 +68,9 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 	admin.Get("/settings", h.GetSettings)
 	admin.Post("/settings", h.UpdateSettings)
 	admin.Post("/settings/test-r2", h.TestR2)
-	admin.Get("/upload-key", h.GetUploadKey)
-	admin.Post("/upload-key", h.ResetUploadKey)
+	admin.Get("/sessions", h.ListSessions)
+	admin.Post("/sessions/:id/revoke", h.RevokeSession)
+	admin.Post("/tokens", h.CreateUploadToken)
 	admin.Get("/client-ip", h.ClientIP)
 
 	// SPA fallback（/api 404 由前面路由返回；其余未知路径回 index.html）

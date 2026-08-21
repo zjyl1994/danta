@@ -3,6 +3,7 @@ package securetoken
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 )
 
@@ -15,6 +16,12 @@ func Hex(nBytes int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// SHA256Hex returns the lowercase hex SHA-256 digest of s (用于令牌哈希存储).
+func SHA256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // Key returns a cloud-access-key-style secret (e.g. "DTAKq3f9...").

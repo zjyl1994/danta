@@ -2,7 +2,7 @@ import { createContext, useCallback, useEffect, useState } from 'react'
 import Box from '@mui/material/Box'
 import CircularProgress from '@mui/material/CircularProgress'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { api } from './api'
+import { api, ensureAuth } from './api'
 import { loadBackgroundUrl, saveBackgroundUrl } from './bgCache'
 import type { StatusResp } from './types'
 import Layout from './components/Layout'
@@ -46,6 +46,8 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
+      // 先静默续期（refresh token 存在且访问令牌过期时），再拉状态
+      await ensureAuth()
       const r = await api.get<StatusResp>('/status')
       saveBackgroundUrl(r.data.background_url)
       setState({ loaded: true, configured: r.data.configured, authed: r.data.authed, cfg: r.data })
@@ -58,6 +60,13 @@ export default function App() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // 会话失效（refresh 也被吊销）时回到登录页
+  useEffect(() => {
+    const onExpired = () => setState((s) => ({ ...s, authed: false }))
+    window.addEventListener('danta:auth-expired', onExpired)
+    return () => window.removeEventListener('danta:auth-expired', onExpired)
+  }, [])
 
   const value: AppCtxValue = { cfg: state.cfg, refresh }
 

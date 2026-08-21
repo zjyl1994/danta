@@ -12,7 +12,6 @@ import (
 type Settings struct {
 	AdminPasswordHash string
 	MasterSecret      string
-	UploadKey         string
 
 	CDNHost           string
 	R2Endpoint        string
@@ -30,6 +29,7 @@ type Settings struct {
 	LoginFailLimit  int
 	LoginFailWindow int
 	LoginBanSeconds int
+	SessionTTL      int
 }
 
 const (
@@ -41,6 +41,7 @@ const (
 	defaultLoginFailLimit = 5
 	defaultLoginWindow    = 900
 	defaultLoginBanSec    = 900
+	defaultSessionTTL     = 30
 )
 
 // Manager 读取/写入 settings 表并缓存于内存
@@ -158,10 +159,10 @@ func (m *Manager) read(masterSecret string) (Settings, error) {
 		LoginFailLimit:  defaultLoginFailLimit,
 		LoginFailWindow: defaultLoginWindow,
 		LoginBanSeconds: defaultLoginBanSec,
+		SessionTTL:      defaultSessionTTL,
 	}
 	pairs := map[string]*string{
 		"admin.password_hash":  &s.AdminPasswordHash,
-		"upload_key":           &s.UploadKey,
 		"cdn_host":             &s.CDNHost,
 		"r2.endpoint":          &s.R2Endpoint,
 		"r2.access_key_id":     &s.R2AccessKeyID,
@@ -191,6 +192,7 @@ func (m *Manager) read(masterSecret string) (Settings, error) {
 		{"security.login_fail_limit", func(v string) { s.LoginFailLimit = intVal(v, defaultLoginFailLimit) }},
 		{"security.login_fail_window", func(v string) { s.LoginFailWindow = intVal(v, defaultLoginWindow) }},
 		{"security.login_ban_seconds", func(v string) { s.LoginBanSeconds = intVal(v, defaultLoginBanSec) }},
+		{"security.session_ttl", func(v string) { s.SessionTTL = intVal(v, defaultSessionTTL) }},
 	}
 	for _, value := range values {
 		v, err := m.store.GetSetting(value.key)

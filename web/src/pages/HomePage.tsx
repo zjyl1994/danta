@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import imageCompression from 'browser-image-compression'
+import imageCompressionWorkerUrl from 'browser-image-compression/dist/browser-image-compression.js?url'
+import { useDropzone, type FileRejection } from 'react-dropzone'
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -45,6 +49,19 @@ interface Result {
   size: number
 }
 
+const IMAGE_ACCEPT = {
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/gif': ['.gif'],
+  'image/webp': ['.webp'],
+  'image/bmp': ['.bmp'],
+  'image/avif': ['.avif']
+}
+
+function isSupportedImage(file: File): boolean {
+  return file.type in IMAGE_ACCEPT || /\.(jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(file.name)
+}
+
 async function fileDims(file: File): Promise<{ w: number; h: number } | null> {
   try {
     if ('createImageBitmap' in window) {
@@ -65,19 +82,16 @@ async function fileDims(file: File): Promise<{ w: number; h: number } | null> {
 async function compressImage(file: File, maxDim: number, quality: number): Promise<File | null> {
   const ext = (file.name.toLowerCase().split('.').pop() ?? '')
   if (ext === 'gif' || ext === 'avif') return null
-  if (!('createImageBitmap' in window)) return null
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
-    const k = Math.max(bmp.width, bmp.height) > maxDim ? maxDim / Math.max(bmp.width, bmp.height) : 1
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(bmp.width * k))
-    canvas.height = Math.max(1, Math.round(bmp.height * k))
-    canvas.getContext('2d')!.drawImage(bmp, 0, 0, canvas.width, canvas.height)
-    if (typeof bmp.close === 'function') bmp.close()
-    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/webp', quality / 100))
-    if (!blob) return null
+    const compressed = await imageCompression(file, {
+      maxWidthOrHeight: maxDim,
+      fileType: 'image/webp',
+      initialQuality: quality / 100,
+      useWebWorker: true,
+      libURL: imageCompressionWorkerUrl
+    })
     const base = file.name.replace(/\.[^.]+$/, '')
-    return new File([blob], `${base}.webp`, { type: 'image/webp' })
+    return new File([compressed], `${base}.webp`, { type: 'image/webp', lastModified: file.lastModified })
   } catch {
     return null
   }
@@ -87,17 +101,26 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
   const [items, setItems] = useState<Item[]>([])
   const [results, setResults] = useState<Result[]>([])
   const [original, setOriginal] = usePersistentState<boolean>('danta.upload_original', () => false)
-  const [dragging, setDragging] = useState(false)
-  const [globalDrag, setGlobalDrag] = useState(false)
+  const [dropError, setDropError] = useState('')
   const [busy, setBusy] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     return () => items.forEach((i) => URL.revokeObjectURL(i.preview))
   }, [items])
 
-  const addFiles = (files: FileList | File[]) => {
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|avif)$/i.test(f.name))
+  const addFiles = useCallback((files: File[]) => {
+    const imageFiles = files.filter(isSupportedImage)
+    const oversized = imageFiles.filter((f) => f.size > cfg.max_upload_bytes)
+    const list = imageFiles.filter((f) => f.size <= cfg.max_upload_bytes)
+    if (files.length !== imageFiles.length || oversized.length > 0) {
+      const messages: string[] = []
+      if (files.length !== imageFiles.length) messages.push('仅支持 JPG、PNG、GIF、WebP、BMP 和 AVIF 图片')
+      if (oversized.length > 0) messages.push(`${oversized.length} 张图片超过单张大小限制`)
+      setDropError(messages.join('；'))
+    } else {
+      setDropError('')
+    }
+    if (list.length === 0) return
     const now = Date.now()
     const newItems: Item[] = list.map((f, idx) => ({
       id: now + idx,
@@ -114,58 +137,62 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
         if (d) setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, width: d.w, height: d.h } : x)))
       })
     })
+  }, [cfg.max_upload_bytes])
+
+  const onDropRejected = (rejections: FileRejection[]) => {
+    const hasTooLarge = rejections.some((r) => r.errors.some((e) => e.code === 'file-too-large'))
+    const hasInvalidType = rejections.some((r) => r.errors.some((e) => e.code === 'file-invalid-type'))
+    const messages: string[] = []
+    if (hasInvalidType) messages.push('仅支持 JPG、PNG、GIF、WebP、BMP 和 AVIF 图片')
+    if (hasTooLarge) messages.push('图片超过单张大小限制')
+    setDropError(messages.join('；') || '部分文件无法添加')
   }
 
-  const addFilesRef = useRef<(files: FileList | File[]) => void>(() => {})
-  addFilesRef.current = addFiles
+  const {
+    getInputProps,
+    getRootProps,
+    isDragAccept,
+    isDragActive,
+    isDragGlobal,
+    open
+  } = useDropzone({
+    accept: IMAGE_ACCEPT,
+    maxSize: cfg.max_upload_bytes,
+    multiple: true,
+    noClick: true,
+    noDragEventsBubbling: true,
+    preventDropOnDocument: false,
+    onDropAccepted: addFiles,
+    onDropRejected
+  })
 
-  // 全屏粘贴 / 拖拽导入（document 级，任意位置）
+  // 全页拖放和粘贴保留项目行为；区域内的选择、校验和拖放由 react-dropzone 接管。
   useEffect(() => {
-    let depth = 0
     const hasFiles = (e: DragEvent) => e.dataTransfer?.types?.includes('Files')
-
-    const onDragEnter = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-      depth++
-      setGlobalDrag(true)
-    }
     const onDragOver = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      e.preventDefault()
-    }
-    const onDragLeave = (e: DragEvent) => {
-      if (!hasFiles(e)) return
-      depth = Math.max(0, depth - 1)
-      if (depth === 0) setGlobalDrag(false)
+      if (hasFiles(e)) e.preventDefault()
     }
     const onDrop = (e: DragEvent) => {
-      if (!hasFiles(e)) return
+      if (!hasFiles(e) || e.defaultPrevented) return
       e.preventDefault()
-      depth = 0
-      setGlobalDrag(false)
-      if (e.dataTransfer?.files?.length) addFilesRef.current(e.dataTransfer.files)
+      if (e.dataTransfer?.files?.length) addFiles(Array.from(e.dataTransfer.files))
     }
     const onPaste = (e: ClipboardEvent) => {
       const files = e.clipboardData?.files
       if (files && files.length) {
         e.preventDefault()
-        addFilesRef.current(files)
+        addFiles(Array.from(files))
       }
     }
-    document.addEventListener('dragenter', onDragEnter)
     document.addEventListener('dragover', onDragOver)
-    document.addEventListener('dragleave', onDragLeave)
     document.addEventListener('drop', onDrop)
     document.addEventListener('paste', onPaste)
     return () => {
-      document.removeEventListener('dragenter', onDragEnter)
       document.removeEventListener('dragover', onDragOver)
-      document.removeEventListener('dragleave', onDragLeave)
       document.removeEventListener('drop', onDrop)
       document.removeEventListener('paste', onPaste)
     }
-  }, [])
+  }, [addFiles])
 
   const removeItem = (id: number) => setItems((arr) => arr.filter((i) => i.id !== id))
 
@@ -240,28 +267,22 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
       </Stack>
 
       <Paper
+        {...getRootProps({
+          role: 'button',
+          'aria-label': '选择或拖放图片',
+          onClick: () => open()
+        })}
         elevation={0}
         sx={{
           p: 3,
           textAlign: 'center',
           cursor: 'pointer',
-          bgcolor: dragging ? 'primary.light' : 'inherit',
+          bgcolor: isDragActive ? (isDragAccept ? 'primary.light' : 'error.light') : 'inherit',
           border: '2px dashed',
-          borderColor: dragging ? 'primary.main' : 'divider'
+          borderColor: isDragActive ? (isDragAccept ? 'primary.main' : 'error.main') : 'divider'
         }}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}
-        onClick={() => inputRef.current?.click()}
       >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }}
-        />
+        <input {...getInputProps()} />
         <UploadFileIcon sx={{ fontSize: 64, color: 'text.secondary' }} />
         <Typography variant="h6">拖拽图片到这里，点击选择，或直接 Ctrl+V 粘贴</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -269,6 +290,8 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
           {!original && ' · 上传时自动压缩，减小图片体积'}
         </Typography>
       </Paper>
+
+      {dropError && <Alert severity="warning" onClose={() => setDropError('')}>{dropError}</Alert>}
 
       {items.length > 0 && (
         <Card>
@@ -366,7 +389,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
         </Card>
       )}
 
-      {globalDrag && (
+      {(isDragGlobal || isDragActive) && (
         <Box
           sx={{
             position: 'fixed',

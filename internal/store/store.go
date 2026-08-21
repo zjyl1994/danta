@@ -18,7 +18,7 @@ func New(db *gorm.DB) *Store {
 }
 
 func (s *Store) AutoMigrate() error {
-	return s.db.AutoMigrate(&Image{}, &Setting{})
+	return s.db.AutoMigrate(&Image{}, &Setting{}, &Token{})
 }
 
 // ---- Image ----

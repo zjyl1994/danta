@@ -37,7 +37,6 @@ func TestLoadAndReloadUseTheSameDefaults(t *testing.T) {
 	}
 
 	if err := manager.Set(map[string]string{
-		"upload_key":                 "upload-key",
 		"proxy_mode":                 "invalid",
 		"max_upload_bytes":           "invalid",
 		"webp_quality":               "invalid",
@@ -46,18 +45,28 @@ func TestLoadAndReloadUseTheSameDefaults(t *testing.T) {
 		"security.login_fail_limit":  "invalid",
 		"security.login_fail_window": "invalid",
 		"security.login_ban_seconds": "invalid",
+		"security.session_ttl":       "invalid",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	reloaded := manager.Get()
-	if reloaded.MasterSecret != initial.MasterSecret || reloaded.UploadKey != "upload-key" {
-		t.Fatalf("reload lost persisted values: %#v", reloaded)
+	if reloaded.MasterSecret != initial.MasterSecret {
+		t.Fatalf("reload lost master secret: %#v", reloaded)
 	}
 	if reloaded.ProxyMode != defaultProxyMode || reloaded.MaxUploadBytes != defaultMaxUploadBytes ||
 		reloaded.WebPQuality != defaultWebPQuality || reloaded.ResizeMaxDim != defaultResizeMaxDim ||
 		reloaded.CacheMaxAge != defaultCacheMaxAge || reloaded.LoginFailLimit != defaultLoginFailLimit ||
-		reloaded.LoginFailWindow != defaultLoginWindow || reloaded.LoginBanSeconds != defaultLoginBanSec {
+		reloaded.LoginFailWindow != defaultLoginWindow || reloaded.LoginBanSeconds != defaultLoginBanSec ||
+		reloaded.SessionTTL != defaultSessionTTL {
 		t.Fatalf("unexpected defaults after reload: %#v", reloaded)
+	}
+
+	if err := manager.Set(map[string]string{"security.session_ttl": "7"}); err != nil {
+		t.Fatal(err)
+	}
+	reloaded = manager.Get()
+	if got := reloaded.SessionTTL; got != 7 {
+		t.Fatalf("session_ttl = %d, want 7", got)
 	}
 
 	loadedAgain := New(st)

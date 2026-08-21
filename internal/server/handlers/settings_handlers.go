@@ -6,7 +6,6 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/zjyl1994/danta/internal/securetoken"
 	"github.com/zjyl1994/danta/internal/server/middleware"
 )
 
@@ -38,6 +37,7 @@ func (h *Handler) publicSettings() fiber.Map {
 		"login_fail_limit":     s.LoginFailLimit,
 		"login_fail_window":    s.LoginFailWindow,
 		"login_ban_seconds":    s.LoginBanSeconds,
+		"session_ttl":          s.SessionTTL,
 		"has_password":         s.AdminPasswordHash != "",
 		"background_image":     s.BackgroundImage,
 		"background_url":       backgroundURL(s),
@@ -114,6 +114,7 @@ func (h *Handler) UpdateSettings(c fiber.Ctx) error {
 		"login_fail_limit":  "security.login_fail_limit",
 		"login_fail_window": "security.login_fail_window",
 		"login_ban_seconds": "security.login_ban_seconds",
+		"session_ttl":       "security.session_ttl",
 	}
 	for k, dbk := range intFields {
 		switch v := body[k].(type) {
@@ -165,11 +166,6 @@ func (h *Handler) TestR2(c fiber.Ctx) error {
 	return writeJSON(c, fiber.Map{"ok": true})
 }
 
-// GET /api/admin/upload-key 查看上传 Key
-func (h *Handler) GetUploadKey(c fiber.Ctx) error {
-	return writeJSON(c, fiber.Map{"upload_key": h.Settings.Get().UploadKey})
-}
-
 // GET /api/admin/client-ip 当前请求 IP；可选 ?mode=none|local 按指定模式预览解析
 func (h *Handler) ClientIP(c fiber.Ctx) error {
 	s := h.Settings.Get()
@@ -178,16 +174,4 @@ func (h *Handler) ClientIP(c fiber.Ctx) error {
 		mode = s.ProxyMode
 	}
 	return writeJSON(c, fiber.Map{"ip": middleware.ClientIP(c, mode), "proxy_mode": mode})
-}
-
-// POST /api/admin/upload-key 重置上传 Key
-func (h *Handler) ResetUploadKey(c fiber.Ctx) error {
-	key, err := securetoken.Key()
-	if err != nil {
-		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "generation failed")
-	}
-	if err := h.Settings.SetOne("upload_key", key); err != nil {
-		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "save failed")
-	}
-	return writeJSON(c, fiber.Map{"upload_key": key})
 }

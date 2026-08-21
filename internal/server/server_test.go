@@ -235,8 +235,9 @@ func TestSetupLoginUploadFlow(t *testing.T) {
 		t.Fatalf("login %d", res.StatusCode)
 	}
 	token, _ := out["token"].(string)
-	if token == "" {
-		t.Fatal("empty token")
+	refresh, _ := out["refresh_token"].(string)
+	if token == "" || refresh == "" {
+		t.Fatalf("empty token/refresh: %v", out)
 	}
 
 	authHdr := map[string]string{"Authorization": "Bearer " + token}
@@ -305,6 +306,149 @@ func TestSetupLoginUploadFlow(t *testing.T) {
 	}
 	if out["total"].(float64) != 2 {
 		t.Fatalf("expected total 2, got %v", out["total"])
+	}
+
+	// refresh：续期后拿到新访问令牌
+	res, out = doTest(t, app, http.MethodPost, "/api/refresh", jsonHdr, []byte(`{"refresh_token":"`+refresh+`"}`))
+	if res.StatusCode != 200 || out["token"].(string) == "" {
+		t.Fatalf("refresh = %d, %v", res.StatusCode, out)
+	}
+	newToken := out["token"].(string)
+
+	// 原 refresh token 已滑动，可再次使用
+	res, _ = doTest(t, app, http.MethodPost, "/api/refresh", jsonHdr, []byte(`{"refresh_token":"`+refresh+`"}`))
+	if res.StatusCode != 200 {
+		t.Fatalf("refresh slide %d", res.StatusCode)
+	}
+
+	// logout 吊销后 refresh 应 401
+	doTest(t, app, http.MethodPost, "/api/logout", jsonHdr, []byte(`{"refresh_token":"`+refresh+`"}`))
+	res, _ = doTest(t, app, http.MethodPost, "/api/refresh", jsonHdr, []byte(`{"refresh_token":"`+refresh+`"}`))
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("refresh after logout = %d, want 401", res.StatusCode)
+	}
+
+	// 新令牌仍可访问管理 API
+	authHdr2 := map[string]string{"Authorization": "Bearer " + newToken}
+	res, _ = doTest(t, app, http.MethodGet, "/api/admin/images?page=1&size=10", authHdr2, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("list with refreshed token %d", res.StatusCode)
+	}
+}
+
+func TestUploadTokenFlow(t *testing.T) {
+	app, fs, _ := setupConfigured(t)
+	token := setupAndLogin(t, app)
+	authHdr := map[string]string{"Authorization": "Bearer " + token}
+	jsonHdr := map[string]string{"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+
+	// 创建上传令牌
+	res, out := doTest(t, app, http.MethodPost, "/api/admin/tokens", jsonHdr, []byte(`{"name":"命令行","days":30}`))
+	if res.StatusCode != 200 {
+		t.Fatalf("create token %d: %v", res.StatusCode, out)
+	}
+	uploadTok, _ := out["token"].(string)
+	if uploadTok == "" {
+		t.Fatal("empty upload token")
+	}
+
+	// 用上传令牌上传
+	res, out = doTest(t, app, http.MethodPost, "/api/upload",
+		map[string]string{"Authorization": "Bearer " + uploadTok, "Content-Type": "multipart/form-data; boundary=" + boundary},
+		multipartBody(makePNG(t, 16, 16), "tok.png", "true"))
+	if res.StatusCode != 200 {
+		t.Fatalf("upload with token %d: %v", res.StatusCode, out)
+	}
+	if len(fs.data) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(fs.data))
+	}
+
+	// 会话列表包含登录会话与上传令牌
+	res, out = doTest(t, app, http.MethodGet, "/api/admin/sessions", authHdr, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("list sessions %d", res.StatusCode)
+	}
+	sessions, _ := out["sessions"].([]interface{})
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d: %v", len(sessions), out)
+	}
+
+	// 吊销上传令牌后应无法上传
+	var revokeID interface{}
+	for _, s := range sessions {
+		m := s.(map[string]interface{})
+		if m["kind"] == "upload" {
+			revokeID = m["id"]
+		}
+	}
+	res, _ = doTest(t, app, http.MethodPost, "/api/admin/sessions/"+fmt.Sprintf("%v", revokeID)+"/revoke", authHdr, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("revoke %d", res.StatusCode)
+	}
+	res, out = doTest(t, app, http.MethodPost, "/api/upload",
+		map[string]string{"Authorization": "Bearer " + uploadTok, "Content-Type": "multipart/form-data; boundary=" + boundary},
+		multipartBody(makePNG(t, 16, 16), "tok2.png", "true"))
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("upload after revoke = %d, want 401: %v", res.StatusCode, out)
+	}
+}
+
+func TestLoginSessionNameFromUA(t *testing.T) {
+	app, _, st := setupConfigured(t)
+	jsonHdr := map[string]string{"Content-Type": "application/json"}
+	if res, _ := doTest(t, app, http.MethodPost, "/api/setup", jsonHdr, []byte(`{"password":"testpass123"}`)); res.StatusCode != 200 {
+		t.Fatalf("setup %d", res.StatusCode)
+	}
+	loginHdr := map[string]string{
+		"Content-Type": "application/json",
+		"User-Agent":   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+	}
+	res, out := doTest(t, app, http.MethodPost, "/api/login", loginHdr, []byte(`{"password":"testpass123"}`))
+	if res.StatusCode != 200 {
+		t.Fatalf("login %d", res.StatusCode)
+	}
+	tok, _ := out["token"].(string)
+	refresh, _ := out["refresh_token"].(string)
+	res, out = doTest(t, app, http.MethodGet, "/api/admin/sessions", map[string]string{"Authorization": "Bearer " + tok}, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("sessions %d", res.StatusCode)
+	}
+	sessions, _ := out["sessions"].([]interface{})
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d: %v", len(sessions), out)
+	}
+	name := sessions[0].(map[string]interface{})["name"]
+	if name != "Safari · iPhone" {
+		t.Fatalf("device name = %v, want Safari · iPhone", name)
+	}
+	sess, err := st.TokenByHash(store.TokenHash(refresh))
+	if err != nil || sess == nil {
+		t.Fatalf("load login session: %v", err)
+	}
+	if sess.LastUsedAt == nil {
+		t.Fatal("login session last_used_at is nil")
+	}
+}
+
+func TestUploadTokenValidation(t *testing.T) {
+	app, _, _ := setupConfigured(t)
+	// 未授权 token 上传应 401
+	res, out := doTest(t, app, http.MethodPost, "/api/upload",
+		map[string]string{"Authorization": "Bearer not-a-token", "Content-Type": "multipart/form-data; boundary=" + boundary},
+		multipartBody(makePNG(t, 8, 8), "x.png", "true"))
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized upload = %d, want 401: %v", res.StatusCode, out)
+	}
+}
+
+func TestSPAReturnsCompressedResponse(t *testing.T) {
+	app, _, _ := setupConfigured(t)
+	res, _ := doTest(t, app, http.MethodGet, "/", map[string]string{"Accept-Encoding": "gzip"}, nil)
+	if got := res.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := res.Header.Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+		t.Fatalf("Vary = %q, want Accept-Encoding", got)
 	}
 }
 

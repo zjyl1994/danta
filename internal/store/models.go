@@ -2,6 +2,18 @@ package store
 
 import "time"
 
+// Token 认证令牌（登录会话 / 上传令牌），只存哈希，用于统一管理
+type Token struct {
+	ID         uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	Kind       string     `gorm:"index" json:"kind"`   // "login"=登录会话 / "upload"=上传令牌
+	Name       string     `json:"name"`                // 设备名或令牌备注
+	TokenHash  string     `gorm:"uniqueIndex;size:64" json:"-"` // SHA-256 十六进制，仅存哈希
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 // Image 图片记录（对象存储元数据镜像）
 type Image struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`

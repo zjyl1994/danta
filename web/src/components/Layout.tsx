@@ -25,7 +25,7 @@ import SecurityIcon from '@mui/icons-material/Security'
 import ApiIcon from '@mui/icons-material/Api'
 import BuildIcon from '@mui/icons-material/Build'
 import ImageIcon from '@mui/icons-material/Image'
-import { clearToken } from '../api'
+import { api, clearToken, getRefreshToken } from '../api'
 import { AppCtx } from '../App'
 import { usePersistentState } from '../usePersistentState'
 
@@ -51,7 +51,15 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
   const [settingsOpen, setSettingsOpen] = usePersistentState<boolean>('danta.settings_open', () => loc.pathname.startsWith('/settings'))
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  const logout = () => {
+  const logout = async () => {
+    const rt = getRefreshToken()
+    if (rt) {
+      try {
+        await api.post('/logout', { refresh_token: rt })
+      } catch {
+        /* ignore */
+      }
+    }
     clearToken()
     nav('/')
     onLogout()

@@ -59,9 +59,34 @@ export interface SettingsResp {
   login_fail_limit: number
   login_fail_window: number
   login_ban_seconds: number
+  session_ttl: number
   has_password: boolean
   background_image: string
   background_url: string
+}
+
+export interface LoginResp {
+  token: string
+  refresh_token: string
+  device_id: number
+  expires_at: string
+}
+
+export interface SessionItem {
+  id: number
+  kind: 'login' | 'upload'
+  name: string
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+}
+
+export interface NewTokenResp {
+  id: number
+  token: string
+  name: string
+  expires_at: string | null
 }
 
 export interface ScanItem {

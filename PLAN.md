@@ -26,7 +26,7 @@
 
 ## 3. 功能
 
-- **上传**：`POST /api/upload`（multipart/form-data：`file` + `original` 布尔，省略=压缩模式）。**首页顶部全局开关切换模式（默认压缩，开关=原图直存）**，前端多文件并行上传（限并发）。鉴权：上传 Key（`Bearer <upload_key>`）**或**管理员 JWT；**不支持 `?key=`**。
+- **上传**：`POST /api/upload`（multipart/form-data：`file` + `original` 布尔，省略=压缩模式）。**首页顶部全局开关切换模式（默认压缩，开关=原图直存）**，前端多文件并行上传（限并发）。鉴权：有效上传令牌（`Bearer <upload_token>`，支持多个、可单独吊销/设过期）**或**管理员 JWT；**不支持 `?key=`**。
   - **前端预压缩（浏览器 canvas）**：压缩模式下上传前尝试 `createImageBitmap(blob, { imageOrientation: 'from-image' })`（保 EXIF 方向；**不支持 `imageOrientation` 时回退 `<img>` 元素加载（浏览器自带 EXIF 校正），再失败则回退传原始字节交后端转 EXIF**）→ 按 `/api/status` 的 `resize_max_dim` 等比缩放 → `canvas.toBlob('image/webp', webp_quality/100)` → 上传 WebP 字节（`original=false`）；canvas 不可用/失败、或文件为 gif/avif（不宜/无法 canvas 处理）→ 回退传原始字节。
   - **magic 校验（全量）**：所有上传两种模式先过 magic 白名单（jpg/jpeg/png/gif/webp/bmp/avif），非白名单 → 400（`unsupported_type`）。"解码失败回退"仅指白名单内但无法解码（如 avif）。
   - **原图模式**（`original=true`）：magic 识别 + SHA-256 后**原字节直存 R2**，不解码/缩放/转码。
@@ -36,7 +36,7 @@
 
 **上传接口规格（汇总）**：
 
-- `POST /api/upload`，multipart/form-data：`file` + `original`（省略=压缩）；`Authorization: Bearer <upload_key>` 或管理员 JWT，无 `?key=`。
+- `POST /api/upload`，multipart/form-data：`file` + `original`（省略=压缩）；`Authorization: Bearer <upload_token>` 或管理员 JWT，无 `?key=`。
 - **流程**：`读+magic+SHA-256（锁外）→ 拿锁查重 (hash,original) 命中→返回已有链接 → 释放锁 → 锁外处理 → 重新拿锁→二次查重 命中→丢弃处理结果 → 生成 ObjectKey {ulid}.{ext} → 写 R2（附 Content-Type + Cache-Control: public, max-age={cache_max_age}, immutable）→ 写 DB（失败补偿删 R2）→ 释放锁`。
 - **模式**：
   - magic 白名单（jpg/jpeg/png/gif/webp/bmp/avif）外 → 400 `unsupported_type`。
@@ -86,9 +86,9 @@ type Setting struct {
 
 ## 5. 鉴权
 
-- **Setup**：`admin.password_hash` 空 = 未配置 → 302 `/setup`；`POST /api/setup` 仅初始化管理员密码（argon2id）+ 生成 `upload_key`（`master_secret` 首次建库生成）；完成后永久禁用；仅本机/内网。
-- **管理员**：`POST /api/login` 仅密码 → JWT（HS256，`master_secret` 签名，exp 7 天）；Bearer 访问管理 API，前端存 `sessionStorage`；无 Cookie 无 CSRF。设置面板可改密码。
-- **上传 Key**：独立于登录，后台生成/重置（1 个）；上传 Key 或管理员 JWT 二选一。
+- **Setup**：`admin.password_hash` 空 = 未配置 → 302 `/setup`；`POST /api/setup` 仅初始化管理员密码（argon2id）（`master_secret` 首次建库生成）；完成后永久禁用；仅本机/内网。
+- **管理员**：`POST /api/login` 仅密码 → **访问令牌 JWT（HS256，`master_secret` 签名，exp 1h）+ 登录会话 refresh token（DB 仅存 SHA-256 哈希，有效期 `session_ttl` 天，滑动续期；设备名按 User-Agent 自动生成「浏览器 · 系统」）**；前端存 `localStorage`（勾选"记住我"）或 `sessionStorage`；401 时静默 `POST /api/refresh` 续期后重试，refresh 失效则回登录页。无 Cookie 无 CSRF。设置面板可改密码、看/吊销已登录设备。
+- **上传令牌**：存于 Token 表（kind=upload，仅存哈希），支持多个、命名、设过期、单独吊销；创建时明文仅显示一次。
 - CDN 直链免登录公开只读。
 
 ## 6. settings 键
@@ -97,7 +97,6 @@ type Setting struct {
 |---|---|---|
 | `admin.password_hash` | - | 空=setup 模式 |
 | `master_secret` | 首次建库生成 | JWT 签名密钥源 |
-| `upload_key` | 后台生成 | 上传 Key（1 个，可重置） |
 | `cdn_host` | - | CDN 域名；迁移须与迁移前一致，否则旧链接失效 |
 | `r2.endpoint`/`access_key_id`/`secret_access_key`/`bucket` | - | S3 凭证（明文存表） |
 | `proxy_mode` | none | `none`/`local` |
@@ -105,6 +104,7 @@ type Setting struct {
 | `resize_max_dim` | 2560 | 压缩模式缩放长边上限 |
 | `cache_max_age` | 86400 | CDN 缓存秒数；滑块（1h/6h/1d/7d/30d/1y） |
 | `security.login_fail_limit`/`login_fail_window`/`login_ban_seconds` | 5/900/900 | 登录失败封禁 |
+| `security.session_ttl` | 30 | 登录会话有效期（天），滑动续期 |
 
 setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时上传被门控。启动：`.env` → `DANTA_LISTEN`/`DANTA_DATA_DIR` → SQLite（首建生成 `master_secret`）→ settings 载入 → 启动。
 
@@ -113,9 +113,11 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | `/api/setup` | 仅 setup | 初始化管理员密码 |
-| POST | `/api/login` | 无 | 密码登录→JWT（IP 封禁兜底） |
+| POST | `/api/login` | 无 | 密码登录→访问令牌 + refresh token（IP 封禁兜底） |
+| POST | `/api/refresh` | refresh token | 静默续期（滑动） |
+| POST | `/api/logout` | refresh token | 吊销当前登录会话 |
 | GET | `/api/status` | 无 | 公开：`{ configured, authed, resize_max_dim, webp_quality, max_upload_bytes }`——SPA 启动守卫 + 前端 canvas 预压缩参数 |
-| POST | `/api/upload` | 上传 Key 或 JWT | multipart `file`+`original`；返回单个 `url` |
+| POST | `/api/upload` | 上传令牌或 JWT | multipart `file`+`original`；返回单个 `url` |
 | GET | `/api/admin/images` | 会话 | 倒序分页 `?page=&size=` |
 | GET | `/api/admin/stats` | 会话 | 统计 |
 | POST | `/api/admin/images/delete` | 会话 | 删除 `{ids:[uint]}`（单删=单元素）；按 ID 查 ObjectKey → R2 DeleteObject + 删 DB |
@@ -125,8 +127,9 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 | GET | `/api/admin/settings` | 会话 | 读（secret 掩码） |
 | POST | `/api/admin/settings` | 会话 | 写 |
 | POST | `/api/admin/settings/test-r2` | 会话 | 测试 R2 连接 |
-| GET | `/api/admin/upload-key` | 会话 | 查看上传 Key |
-| POST | `/api/admin/upload-key` | 会话 | 重置上传 Key |
+| GET | `/api/admin/sessions` | 会话 | 登录会话 + 上传令牌列表 |
+| POST | `/api/admin/sessions/:id/revoke` | 会话 | 吊销登录会话/上传令牌 |
+| POST | `/api/admin/tokens` | 会话 | 创建上传令牌 `{name?, days?}`；明文仅返回一次 |
 
 **路由**：后端仅处理 `/api/*`；`/`、静态资源（`/assets/*`、`/manifest.webmanifest`、`/sw.js`、`/icons/*`）直接返回，其余任意路径 SPA fallback 到 index.html。
 **反代暴露面**：公网放行 `/`（SPA）+ `/api/*`；`/api/admin/*` 整段拦截或仅内网，JWT 第二道防线。
@@ -143,8 +146,8 @@ setup 完成判定 = `admin.password_hash` 非空；配置缺 R2/`cdn_host` 时�
 **通用性约定**：统一 JSON；**动词只保留 GET/POST——读/查询（幂等）用 GET，写操作（增删改/重置/清理/导入）用 POST**；错误 `{ code, message }`（`config_required`/`auth_failed`/`not_found`/`unsupported_type` 等），状态码 400/401/404/413/429，成功 200；取图地址统一顶层 `url`。
 
 ```bash
-curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_key>" -F "file=@image.png"
-curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_key>" -F "file=@image.png" -F "original=true"
+curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_token>" -F "file=@image.png"
+curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_token>" -F "file=@image.png" -F "original=true"
 ```
 
 **Vite dev 反代**：后端 `DANTA_LISTEN=127.0.0.1:8080`，`vite.config.ts` 反代 `/api` → 后端；生产 `dist/` go:embed，同源。
@@ -193,12 +196,12 @@ DANTA_DATA_DIR=./data         # SQLite 所在
 ## 11. 里程碑
 
 - **M1 骨架**：`.env` + GORM/settings 初始化 + Setup 流程 + `/api/status` + proxy_mode/c.IP() + 路由 + R2 连通性 + Vite/React/MUI + **axios 客户端（拦截器/401/错误归一化）** + dev 反代
-- **M2 上传链路**：上传 Key 鉴权 + magic 白名单校验（非图片 400） + 去重（double-check 锁，按 `(hash, original)` 模式一致）+ **原图直存 / 静态图缩放转 WebP（deepteams/webp + bep/imagemeta EXIF 方向；GIF 与动画回退原图直存；前端 canvas 预压缩直存 WebP 判定）** + 写 R2 + 写 DB + 单 url 外链 + **首页上传页（拖拽/粘贴/预览/原图开关/canvas 预压缩/结果复制）**
-- **M3 管理面**：JWT 会话 + 登录封禁、**倒序列表 + 预览 + 翻页**、单删/批量删除、批量复制、统计仪表盘、上传 Key、设置面板
+- **M2 上传链路**：上传令牌鉴权 + magic 白名单校验（非图片 400） + 去重（double-check 锁，按 `(hash, original)` 模式一致）+ **原图直存 / 静态图缩放转 WebP（deepteams/webp + bep/imagemeta EXIF 方向；GIF 与动画回退原图直存；前端 canvas 预压缩直存 WebP 判定）** + 写 R2 + 写 DB + 单 url 外链 + **首页上传页（拖拽/粘贴/预览/原图开关/canvas 预压缩/结果复制）**
+- **M3 管理面**：登录会话（refresh token 滑动续期）+ 登录封禁、**倒序列表 + 预览 + 翻页**、单删/批量删除、批量复制、统计仪表盘、上传令牌管理、登录设备管理、设置面板
 - **M4 迁移与打磨**：扫描导入（R2→DB，scan/run、仅 ListObjectsV2 只读、对象键只读保留）、孤儿清理、限流、缓存头校验、README/部署文档（含 ShareX/PicGo web-uploader/uPic 接入配置示例）
 
 — 各里程碑交付以 `make test`（settings/store/handlers 单测）与 lint 通过为准。
 
 ## 12. 明确不做
 
-多用户/开放上传、多上传 Key、标签/随机图 API/对外瀑布流、图片编辑/水印/鉴黄、多格式输出（压缩模式仅 WebP，原图模式按原始格式）、按需缩放/动态处理、非图片文件（视频等）、图床协议兼容层（sm.ms 等专用协议一律不做，走通用 REST）、**跨桶/多存储迁移**（导入仅面向当前 R2 桶）、Presigned URL 直传、**私有桶/直链鉴权**（保持公开桶，`{cdn_host}/{id}` 直链始终可访问）。
+多用户/开放上传、标签/随机图 API/对外瀑布流、图片编辑/水印/鉴黄、多格式输出（压缩模式仅 WebP，原图模式按原始格式）、按需缩放/动态处理、非图片文件（视频等）、图床协议兼容层（sm.ms 等专用协议一律不做，走通用 REST）、**跨桶/多存储迁移**（导入仅面向当前 R2 桶）、Presigned URL 直传、**私有桶/直链鉴权**（保持公开桶，`{cdn_host}/{id}` 直链始终可访问）。

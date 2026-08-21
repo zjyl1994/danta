@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import Box from '@mui/material/Box'
+import Dialog from '@mui/material/Dialog'
 import IconButton from '@mui/material/IconButton'
+import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import CloseIcon from '@mui/icons-material/Close'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
@@ -15,9 +17,9 @@ interface LightboxProps {
 
 export default function Lightbox({ images, index, onClose, onNavigate }: LightboxProps) {
   useEffect(() => {
+    if (images.length < 2) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowLeft') onNavigate((index - 1 + images.length) % images.length)
+      if (e.key === 'ArrowLeft') onNavigate((index - 1 + images.length) % images.length)
       else if (e.key === 'ArrowRight') onNavigate((index + 1) % images.length)
     }
     window.addEventListener('keydown', onKey)
@@ -31,41 +33,47 @@ export default function Lightbox({ images, index, onClose, onNavigate }: Lightbo
   const next = (index + 1) % images.length
 
   return (
-    <Box
-      onClick={onClose}
-      sx={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1400,
-        bgcolor: 'rgba(0,0,0,0.92)',
-        display: 'flex',
-        flexDirection: 'column'
-      }}
+    <Dialog
+      fullScreen
+      open
+      onClose={onClose}
+      aria-labelledby="lightbox-title"
+      PaperProps={{ sx: { bgcolor: '#111', color: '#fff' } }}
     >
-      <Box onClick={(e) => e.stopPropagation()} sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', p: 1, color: '#fff' }}>
-          <Typography variant="body2" sx={{ flexGrow: 1 }} noWrap>
-            {img.name}（{index + 1}/{images.length}）
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', p: 1 }}>
+          <Typography id="lightbox-title" variant="body2" sx={{ flexGrow: 1 }} noWrap>
+            {img.name} ({index + 1}/{images.length})
           </Typography>
-          <IconButton color="inherit" onClick={onClose}>
-            <CloseIcon />
-          </IconButton>
+          <Tooltip title="关闭预览">
+            <IconButton aria-label="关闭预览" color="inherit" onClick={onClose}>
+              <CloseIcon />
+            </IconButton>
+          </Tooltip>
         </Box>
         <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0, px: 1 }}>
-          <IconButton color="inherit" size="large" onClick={() => onNavigate(prev)}>
-            <ChevronLeftIcon fontSize="large" />
-          </IconButton>
+          <Tooltip title="上一张">
+            <span>
+              <IconButton aria-label="上一张" color="inherit" size="large" disabled={images.length < 2} onClick={() => onNavigate(prev)}>
+                <ChevronLeftIcon fontSize="large" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <Box
             component="img"
             src={img.url}
             alt={img.name}
             sx={{ maxWidth: 'calc(100% - 140px)', maxHeight: '100%', objectFit: 'contain', bgcolor: '#111', borderRadius: 1 }}
           />
-          <IconButton color="inherit" size="large" onClick={() => onNavigate(next)}>
-            <ChevronRightIcon fontSize="large" />
-          </IconButton>
+          <Tooltip title="下一张">
+            <span>
+              <IconButton aria-label="下一张" color="inherit" size="large" disabled={images.length < 2} onClick={() => onNavigate(next)}>
+                <ChevronRightIcon fontSize="large" />
+              </IconButton>
+            </span>
+          </Tooltip>
         </Box>
       </Box>
-    </Box>
+    </Dialog>
   )
 }

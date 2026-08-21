@@ -34,7 +34,7 @@ export default function SetupPage() {
       ) : (
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
-            设置管理员密码（上传密钥会自动生成，稍后可在设置页查看）
+            设置管理员密码，完成初始化
           </Typography>
           <TextField label="密码" type="password" value={pw} onChange={(e) => setPw(e.target.value)} fullWidth />
           <TextField label="确认密码" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} fullWidth />

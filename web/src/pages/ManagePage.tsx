@@ -25,6 +25,7 @@ import type { ImageItem, StatsResp } from '../types'
 import CopyButton from '../components/CopyButton'
 import FormatSelect from '../components/FormatSelect'
 import Lightbox from '../components/Lightbox'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { copyText } from '../clipboard'
 import { formatLink, Fmt, loadFormat, saveFormat } from '../format'
 import { usePersistentState } from '../usePersistentState'
@@ -51,6 +52,7 @@ export default function ManagePage() {
   const [loading, setLoading] = useState(false)
   const [stats, setStats] = useState<StatsResp | null>(null)
   const [lightbox, setLightbox] = useState<number | null>(null)
+  const { confirm, dialog } = useConfirmDialog()
 
   const loadStats = useCallback(async () => {
     try {
@@ -95,7 +97,7 @@ export default function ManagePage() {
     })
 
   const remove = async (ids: number[]) => {
-    if (!window.confirm(`确认删除 ${ids.length} 张图片？`)) return
+    if (!(await confirm({ title: '删除图片', description: `确认删除 ${ids.length} 张图片？此操作无法撤销。`, confirmLabel: '删除' }))) return
     try {
       await api.post('/admin/images/delete', { ids })
       setSelected((s) => {
@@ -244,6 +246,7 @@ export default function ManagePage() {
           onNavigate={setLightbox}
         />
       )}
+      {dialog}
     </Stack>
   )
 }
