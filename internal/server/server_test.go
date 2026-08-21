@@ -441,6 +441,89 @@ func TestUploadTokenValidation(t *testing.T) {
 	}
 }
 
+func TestSessionListFiltersAndPrunes(t *testing.T) {
+	app, _, st := setupConfigured(t)
+	token := setupAndLogin(t, app)
+	authHdr := map[string]string{"Authorization": "Bearer " + token}
+	now := time.Now()
+
+	// 已过期上传令牌：不应出现在列表中
+	exp := now.Add(-time.Hour)
+	expiredTok := &store.Token{Kind: "upload", Name: "过期令牌", TokenHash: store.TokenHash("tok-expired"), ExpiresAt: &exp, CreatedAt: now.Add(-2 * time.Hour)}
+	if err := st.CreateToken(expiredTok); err != nil {
+		t.Fatal(err)
+	}
+	// 近期吊销（保留期内）：不显示，但仍在库中
+	recentRevoke := now.Add(-24 * time.Hour)
+	revokedRecent := &store.Token{Kind: "upload", Name: "近期吊销", TokenHash: store.TokenHash("tok-revoked-recent"), RevokedAt: &recentRevoke, CreatedAt: now.Add(-2 * 24 * time.Hour)}
+	if err := st.CreateToken(revokedRecent); err != nil {
+		t.Fatal(err)
+	}
+	// 超保留期吊销：列表读取时被兜底删除
+	oldRevoke := now.Add(-40 * 24 * time.Hour)
+	revokedOld := &store.Token{Kind: "upload", Name: "超期吊销", TokenHash: store.TokenHash("tok-revoked-old"), RevokedAt: &oldRevoke, CreatedAt: now.Add(-60 * 24 * time.Hour)}
+	if err := st.CreateToken(revokedOld); err != nil {
+		t.Fatal(err)
+	}
+
+	res, out := doTest(t, app, http.MethodGet, "/api/admin/sessions", authHdr, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("sessions %d", res.StatusCode)
+	}
+	sessions, _ := out["sessions"].([]interface{})
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 active session, got %d: %v", len(sessions), out)
+	}
+	old, err := st.TokenByID(revokedOld.ID)
+	if err != nil || old != nil {
+		t.Fatalf("old revoked token should be pruned: %v %v", old, err)
+	}
+	recent, err := st.TokenByID(revokedRecent.ID)
+	if err != nil || recent == nil {
+		t.Fatal("recent revoked token should be retained")
+	}
+	still, err := st.TokenByID(expiredTok.ID)
+	if err != nil || still == nil {
+		t.Fatal("expired token should be retained within retention")
+	}
+}
+
+func TestCleanupSessionsEndpoint(t *testing.T) {
+	app, _, st := setupConfigured(t)
+	token := setupAndLogin(t, app)
+	authHdr := map[string]string{"Authorization": "Bearer " + token}
+	jsonHdr := map[string]string{"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+	now := time.Now()
+
+	rv := now.Add(-time.Hour)
+	revoked := &store.Token{Kind: "upload", Name: "吊销令牌", TokenHash: store.TokenHash("tok-cleanup-revoked"), RevokedAt: &rv, CreatedAt: now.Add(-2 * time.Hour)}
+	if err := st.CreateToken(revoked); err != nil {
+		t.Fatal(err)
+	}
+	ex := now.Add(-time.Hour)
+	expired := &store.Token{Kind: "upload", Name: "过期令牌", TokenHash: store.TokenHash("tok-cleanup-expired"), ExpiresAt: &ex, CreatedAt: now.Add(-2 * time.Hour)}
+	if err := st.CreateToken(expired); err != nil {
+		t.Fatal(err)
+	}
+
+	res, out := doTest(t, app, http.MethodPost, "/api/admin/sessions/cleanup", jsonHdr, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("cleanup %d", res.StatusCode)
+	}
+	if out["deleted"].(float64) != 2 {
+		t.Fatalf("deleted = %v, want 2", out["deleted"])
+	}
+	// 有效登录会话应保留
+	res, out = doTest(t, app, http.MethodGet, "/api/admin/sessions", authHdr, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("sessions %d", res.StatusCode)
+	}
+	sessions, _ := out["sessions"].([]interface{})
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 active session, got %d: %v", len(sessions), out)
+	}
+}
+
 func TestSPAReturnsCompressedResponse(t *testing.T) {
 	app, _, _ := setupConfigured(t)
 	res, _ := doTest(t, app, http.MethodGet, "/", map[string]string{"Accept-Encoding": "gzip"}, nil)
@@ -451,7 +534,6 @@ func TestSPAReturnsCompressedResponse(t *testing.T) {
 		t.Fatalf("Vary = %q, want Accept-Encoding", got)
 	}
 }
-
 func TestUploadRejectsNonImage(t *testing.T) {
 	app, _, _ := setupConfigured(t)
 	token := setupAndLogin(t, app)

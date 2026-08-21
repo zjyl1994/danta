@@ -69,6 +69,7 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 	admin.Post("/settings", h.UpdateSettings)
 	admin.Post("/settings/test-r2", h.TestR2)
 	admin.Get("/sessions", h.ListSessions)
+	admin.Post("/sessions/cleanup", h.CleanupSessions)
 	admin.Post("/sessions/:id/revoke", h.RevokeSession)
 	admin.Post("/tokens", h.CreateUploadToken)
 	admin.Get("/client-ip", h.ClientIP)

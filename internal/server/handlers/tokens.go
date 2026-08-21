@@ -55,9 +55,13 @@ func (h *Handler) Logout(c fiber.Ctx) error {
 	return writeJSON(c, fiber.Map{"ok": true})
 }
 
-// GET /api/admin/sessions 全部登录会话与上传令牌
+// sessionCleanupRetention 已吊销/已过期 token 的保留期，超过后随列表读取兜底删除
+const sessionCleanupRetention = 30 * 24 * time.Hour
+
+// GET /api/admin/sessions 仅返回有效登录会话与上传令牌，并兜底删除超保留期记录
 func (h *Handler) ListSessions(c fiber.Ctx) error {
-	toks, err := h.Store.ListTokens("")
+	_, _ = h.Store.PruneTokens(time.Now().Add(-sessionCleanupRetention))
+	toks, err := h.Store.ListActiveTokens("")
 	if err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "query failed")
 	}
@@ -75,6 +79,15 @@ func (h *Handler) ListSessions(c fiber.Ctx) error {
 		})
 	}
 	return writeJSON(c, fiber.Map{"sessions": items})
+}
+
+// POST /api/admin/sessions/cleanup 立即删除全部已吊销/已过期的登录会话与上传令牌
+func (h *Handler) CleanupSessions(c fiber.Ctx) error {
+	n, err := h.Store.PruneTokens(time.Now())
+	if err != nil {
+		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "cleanup failed")
+	}
+	return writeJSON(c, fiber.Map{"deleted": n})
 }
 
 // POST /api/admin/tokens 创建上传令牌；days=0 表示永不过期

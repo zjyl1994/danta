@@ -102,7 +102,7 @@ function StorageCard() {
 
 // 安全：反向代理 / 密码 / 登录防爆破 / 登录设备
 function SecurityCard() {
-  const { s, update, save, changePassword, sessions, loadSessions, revokeSession } = useSettingsCtx()
+  const { s, update, save, changePassword, sessions, loadSessions, revokeSession, cleanupSessions } = useSettingsCtx()
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
@@ -144,6 +144,15 @@ function SecurityCard() {
       confirmLabel: '吊销'
     }))) return
     await revokeSession(it.id)
+  }
+
+  const doCleanup = async () => {
+    if (!(await confirm({
+      title: '清理失效记录',
+      description: '立即删除所有已吊销或已过期的登录会话与上传令牌？此操作无法撤销。',
+      confirmLabel: '立即清理'
+    }))) return
+    await cleanupSessions()
   }
 
   const loginSessions = sessions.filter((x) => x.kind === 'login')
@@ -233,10 +242,11 @@ function SecurityCard() {
               <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
                 已登录设备
               </Typography>
+              <Button size="small" onClick={() => void doCleanup()}>清理失效记录</Button>
               <Button size="small" onClick={() => void loadSessions()}>刷新</Button>
             </Stack>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              登录会话在有效期内自动续期；吊销后该设备下次访问将需要重新登录。设备丢失或不用时请及时吊销。
+               登录会话在有效期内自动续期；吊销后该设备下次访问将需要重新登录。设备丢失或不用时请及时吊销。已吊销或已过期的记录超 1 个月会自动清理。
             </Typography>
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">

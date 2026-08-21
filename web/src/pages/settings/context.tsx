@@ -19,6 +19,7 @@ interface SettingsCtx {
   loadSessions: () => Promise<void>
   createUploadToken: (name: string, days: number) => Promise<NewTokenResp>
   revokeSession: (id: number) => Promise<void>
+  cleanupSessions: () => Promise<void>
 }
 
 const Ctx = createContext<SettingsCtx | null>(null)
@@ -143,13 +144,25 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const cleanupSessions = async () => {
+    setErr('')
+    setMsg('')
+    try {
+      const r = await api.post<{ deleted: number }>('/admin/sessions/cleanup')
+      await loadSessions()
+      setMsg(r.data.deleted > 0 ? `已清理 ${r.data.deleted} 条失效记录` : '没有需要清理的记录')
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   return (
     <Ctx.Provider
       value={{
         s, secret, msg, err, sessions,
         setSecret, setMsg, setErr,
         update, save, testR2, changePassword,
-        loadSessions, createUploadToken, revokeSession
+        loadSessions, createUploadToken, revokeSession, cleanupSessions
       }}
     >
       {children}

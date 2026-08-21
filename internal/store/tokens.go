@@ -51,6 +51,29 @@ func (s *Store) ListTokens(kind string) ([]Token, error) {
 	return ts, err
 }
 
+// ListActiveTokens 仅返回未吊销且未过期的 token
+func (s *Store) ListActiveTokens(kind string) ([]Token, error) {
+	now := time.Now()
+	q := s.db.Order("created_at DESC, id DESC").
+		Where("revoked_at IS NULL").
+		Where("expires_at IS NULL OR expires_at > ?", now)
+	if kind != "" {
+		q = q.Where("kind = ?", kind)
+	}
+	var ts []Token
+	err := q.Find(&ts).Error
+	return ts, err
+}
+
+// PruneTokens 删除已吊销或已过期且早于 olderThan 的记录，返回删除行数
+func (s *Store) PruneTokens(olderThan time.Time) (int64, error) {
+	res := s.db.Where(
+		"(revoked_at IS NOT NULL AND revoked_at < ?) OR (revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?)",
+		olderThan, olderThan,
+	).Delete(&Token{})
+	return res.RowsAffected, res.Error
+}
+
 // RevokeToken 吊销令牌（幂等）
 func (s *Store) RevokeToken(id uint) error {
 	now := time.Now()
