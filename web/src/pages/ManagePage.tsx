@@ -145,12 +145,12 @@ export default function ManagePage() {
             { k: 'uploads', l: '近 24 小时新增', v: String(stats.uploads_24h) },
             { k: 'originals', l: '原图', v: String(stats.originals) }
           ].map((c) => (
-            <Card key={c.k} variant="outlined" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 1 }}>
+            <Card key={c.k} variant="outlined" sx={{ minWidth: 0, height: 84, display: 'flex', flexDirection: 'column' }}>
+              <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', py: 1, '&:last-child': { pb: 1 } }}>
                 <Typography variant="body2" color="text.secondary" noWrap>
                   {c.l}
                 </Typography>
-                <Typography variant="h6" fontWeight={700} noWrap>
+                <Typography variant="h5" fontWeight={700} noWrap sx={{ mt: 'auto' }}>
                   {c.v}
                 </Typography>
               </CardContent>
