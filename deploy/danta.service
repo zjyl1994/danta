@@ -1,0 +1,32 @@
+[Unit]
+Description=danta image hosting service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=danta
+Group=danta
+WorkingDirectory=/var/lib/danta
+EnvironmentFile=-/var/lib/danta/.env
+ExecStart=/usr/local/bin/danta
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/danta
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

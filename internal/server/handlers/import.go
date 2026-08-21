@@ -17,9 +17,39 @@ var importExtWhitelist = map[string]bool{
 }
 
 type scanItem struct {
-	Key          string    `json:"key"`
-	Size         int64     `json:"size"`
-	LastModified string    `json:"last_modified"`
+	Key          string `json:"key"`
+	Size         int64  `json:"size"`
+	LastModified string `json:"last_modified"`
+}
+
+type importObjectState uint8
+
+const (
+	importObjectIgnored importObjectState = iota
+	importObjectExisting
+	importObjectNew
+)
+
+func classifyImportObject(o storage.ObjectInfo, keySet map[string]struct{}) importObjectState {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(o.Key)), ".")
+	if !importExtWhitelist[ext] {
+		return importObjectIgnored
+	}
+	if _, ok := keySet[o.Key]; ok {
+		return importObjectExisting
+	}
+	return importObjectNew
+}
+
+// listImportObjects lists a prefix and classifies every object against current DB keys.
+func listImportObjects(stg storage.Storage, prefix string, keySet map[string]struct{}, visit func(storage.ObjectInfo, importObjectState) error) error {
+	collect := func(o storage.ObjectInfo) error {
+		return visit(o, classifyImportObject(o, keySet))
+	}
+	if prefix != "" {
+		return stg.ListPrefix(prefix, collect)
+	}
+	return stg.ListAll(collect)
 }
 
 // scanImport 扫描桶（只读 List），分类 new/existing/ignored
@@ -33,29 +63,23 @@ func (h *Handler) scanImport(prefix string) (total, new, existing, ignored int, 
 	if err != nil {
 		return
 	}
-	collect := func(o storage.ObjectInfo) error {
+	err = listImportObjects(stg, prefix, keySet, func(o storage.ObjectInfo, state importObjectState) error {
 		total++
-		ext := strings.ToLower(filepath.Ext(o.Key))
-		ext = strings.TrimPrefix(ext, ".")
-		if !importExtWhitelist[ext] {
+		switch state {
+		case importObjectIgnored:
 			ignored++
 			return nil
-		}
-		if _, ok := keySet[o.Key]; ok {
+		case importObjectExisting:
 			existing++
 			return nil
-		}
-		new++
-		if len(items) < 100 {
-			items = append(items, scanItem{Key: o.Key, Size: o.Size, LastModified: o.LastModified.Format("2006-01-02 15:04:05")})
+		case importObjectNew:
+			new++
+			if len(items) < 100 {
+				items = append(items, scanItem{Key: o.Key, Size: o.Size, LastModified: o.LastModified.Format("2006-01-02 15:04:05")})
+			}
 		}
 		return nil
-	}
-	if prefix != "" {
-		err = stg.ListPrefix(prefix, collect)
-	} else {
-		err = stg.ListAll(collect)
-	}
+	})
 	return
 }
 
@@ -106,30 +130,25 @@ func (h *Handler) ImportRun(c fiber.Ctx) error {
 		ignN     int
 		errs     []string
 	)
-	collect := func(o storage.ObjectInfo) error {
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(o.Key), "."))
-		if !importExtWhitelist[ext] {
+	err = listImportObjects(stg, body.Prefix, keySet, func(o storage.ObjectInfo, state importObjectState) error {
+		switch state {
+		case importObjectIgnored:
 			ignN++
 			return nil
-		}
-		if _, ok := keySet[o.Key]; ok {
+		case importObjectExisting:
 			skipN++
 			return nil
+		case importObjectNew:
+			toInsert = append(toInsert, store.Image{
+				ObjectKey: o.Key,
+				Name:      filepath.Base(o.Key),
+				Size:      o.Size,
+				Original:  true,
+				CreatedAt: o.LastModified,
+			})
 		}
-		toInsert = append(toInsert, store.Image{
-			ObjectKey: o.Key,
-			Name:      filepath.Base(o.Key),
-			Size:      o.Size,
-			Original:  true,
-			CreatedAt: o.LastModified,
-		})
 		return nil
-	}
-	if body.Prefix != "" {
-		err = stg.ListPrefix(body.Prefix, collect)
-	} else {
-		err = stg.ListAll(collect)
-	}
+	})
 	if err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "r2_error", "list failed")
 	}

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/url"
 	"strings"
 	"time"
@@ -17,14 +15,6 @@ import (
 
 // jwtTTL 管理员 JWT 有效期
 const jwtTTL = 7 * 24 * time.Hour
-
-func randomKey() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
 
 // StorageProvider 按 settings 提供对象存储实例（生产=R2 Provider，测试可注入假实现）
 type StorageProvider interface {
@@ -48,23 +38,6 @@ func writeJSON(c fiber.Ctx, v interface{}) error {
 	return c.JSON(v)
 }
 
-// isAdminAuthed 校验当前 Bearer 是否为有效管理员 JWT（/api/status 用）
-func (h *Handler) isAdminAuthed(c fiber.Ctx) bool {
-	hdr := c.Get("Authorization")
-	if !strings.HasPrefix(hdr, "Bearer ") {
-		return false
-	}
-	tok := strings.TrimSpace(strings.TrimPrefix(hdr, "Bearer "))
-	s := h.Settings.Get()
-	if tok == "" || s.MasterSecret == "" {
-		return false
-	}
-	if ok, _ := middleware.ParseJWT(tok, s.MasterSecret); ok {
-		return true
-	}
-	return false
-}
-
 // imageURL 拼接 CDN 直链（对象键逐段 PathEscape，保留层级）
 func imageURL(cdnHost, objectKey string) string {
 	parts := strings.Split(objectKey, "/")
@@ -72,6 +45,14 @@ func imageURL(cdnHost, objectKey string) string {
 		parts[i] = url.PathEscape(p)
 	}
 	return "https://" + cdnHost + "/" + strings.Join(parts, "/")
+}
+
+// backgroundURL 自定义背景图片直链（未设置返回空串）
+func backgroundURL(s settings.Settings) string {
+	if s.BackgroundImage == "" || s.CDNHost == "" {
+		return ""
+	}
+	return imageURL(s.CDNHost, s.BackgroundImage)
 }
 
 // item 列表项结构

@@ -14,7 +14,7 @@ import (
 	"github.com/zjyl1994/danta/internal/store"
 )
 
-// uploadMu 单机上传锁：串行化「查重→处理→写 R2→写 DB」的关键区
+// uploadMu 单机上传锁：串行化 DB「查重→写入」关键区（R2 网络 IO 在锁外）
 var uploadMu sync.Mutex
 
 // POST /api/upload multipart：file + original（省略=压缩模式）
@@ -75,18 +75,7 @@ func (h *Handler) Upload(c fiber.Ctx) error {
 		}
 	}
 
-	// 重新拿锁二次查重（命中则丢弃处理结果）
-	uploadMu.Lock()
-	defer uploadMu.Unlock()
-	existing, err = h.Store.FindByHash(hash[:], res.Original)
-	if err != nil {
-		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "dedup failed")
-	}
-	if existing != nil {
-		return h.uploadResult(c, s, existing, res.Original)
-	}
-
-	// 生成 ObjectKey → 写 R2 → 写 DB（DB 失败补偿删 R2）
+	// 生成 ObjectKey → 写 R2（锁外，网络 IO 不阻塞其他上传）
 	key := idgen.New() + "." + res.Ext
 	stg, err := h.Storage.Storage(s)
 	if err != nil {
@@ -94,6 +83,19 @@ func (h *Handler) Upload(c fiber.Ctx) error {
 	}
 	if err := stg.Put(key, res.Data, res.Mime, s.CacheMaxAge); err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "r2_error", "upload to R2 failed")
+	}
+
+	// 锁内二次查重：命中则补偿删刚写入的对象并返回既有记录；未命中写 DB（DB 失败补偿删 R2）
+	uploadMu.Lock()
+	defer uploadMu.Unlock()
+	existing, err = h.Store.FindByHash(hash[:], res.Original)
+	if err != nil {
+		_ = stg.Delete([]string{key})
+		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "dedup failed")
+	}
+	if existing != nil {
+		_ = stg.Delete([]string{key})
+		return h.uploadResult(c, s, existing, res.Original)
 	}
 	img := &store.Image{
 		ObjectKey: key,

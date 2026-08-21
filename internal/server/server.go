@@ -32,6 +32,8 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 	}
 	s0 := st.Get()
 	h.Ban.Configure(s0.LoginFailLimit, s0.LoginFailWindow, s0.LoginBanSeconds)
+	// 限流器每次请求动态解析当前 proxy_mode（设置变更后无需重建）
+	mode := func() string { return st.Get().ProxyMode }
 
 	app := fiber.New(fiber.Config{
 		BodyLimit: 64 * 1024 * 1024, // 硬上限，实际大小由 handler 按配置校验
@@ -40,13 +42,13 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 
 	// 公开
 	app.Get("/api/status", h.Status)
-	app.Post("/api/login", middleware.BanGuard(h.Ban, st), middleware.NewRate(30, time.Minute, s0.ProxyMode).Handler, h.Login)
-	app.Post("/api/setup", middleware.BanGuard(h.Ban, st), h.Setup)
+	app.Post("/api/login", middleware.BanGuard(h.Ban, st), middleware.NewRate(30, time.Minute, mode).Handler, h.Login)
+	app.Post("/api/setup", middleware.BanGuard(h.Ban, st), middleware.NewRate(30, time.Minute, mode).Handler, h.Setup)
 
 	// 上传：上传 Key 或管理员 JWT
 	app.Post("/api/upload",
 		middleware.UploadAuth(st),
-		middleware.NewRate(120, time.Minute, s0.ProxyMode).Handler,
+		middleware.NewRate(120, time.Minute, mode).Handler,
 		h.Upload,
 	)
 
@@ -55,7 +57,7 @@ func NewWithDeps(s *store.Store, st *settings.Manager, sp handlers.StorageProvid
 	admin.Get("/images", h.ListImages)
 	admin.Get("/stats", h.Stats)
 	admin.Post("/images/delete", h.DeleteImages)
-	admin.Post("/cleanup", middleware.NewRate(10, time.Minute, s0.ProxyMode).Handler, h.Cleanup)
+	admin.Post("/cleanup", middleware.NewRate(10, time.Minute, mode).Handler, h.Cleanup)
 	admin.Get("/import/scan", h.ImportScan)
 	admin.Post("/import/run", h.ImportRun)
 	admin.Get("/settings", h.GetSettings)

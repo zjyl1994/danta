@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/glebarez/sqlite"
 	"github.com/gofiber/fiber/v3"
@@ -40,6 +41,9 @@ func loadDotEnv() {
 			_ = os.Setenv(k, v)
 		}
 	}
+	if err := sc.Err(); err != nil {
+		log.Printf("read .env: %v", err)
+	}
 }
 
 func envOr(k, def string) string {
@@ -51,8 +55,10 @@ func envOr(k, def string) string {
 
 func main() {
 	loadDotEnv()
+	// 新建文件默认 0600/0700，防止 db（含 master_secret、upload_key、R2 Secret）被同机其他用户读取
+	syscall.Umask(0o077)
 
-	listen := envOr("DANTA_LISTEN", "127.0.0.1:32682")
+	listen := envOr("DANTA_LISTEN", "127.0.0.1:8080")
 	dataDir := envOr("DANTA_DATA_DIR", "./data")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("mkdir data dir: %v", err)

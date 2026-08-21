@@ -240,6 +240,10 @@ func TestSetupLoginUploadFlow(t *testing.T) {
 	}
 
 	authHdr := map[string]string{"Authorization": "Bearer " + token}
+	res, out = doTest(t, app, http.MethodGet, "/api/status", authHdr, nil)
+	if res.StatusCode != http.StatusOK || out["authed"] != true {
+		t.Fatalf("authenticated status = %d, %v", res.StatusCode, out)
+	}
 
 	// 原图上传
 	pngBytes := makePNG(t, 64, 32)
@@ -342,6 +346,35 @@ func TestCleanupRespectsGrace(t *testing.T) {
 	}
 	if _, ok := fs.keys["orphan-fresh"]; !ok {
 		t.Fatal("orphan-fresh deleted unexpectedly")
+	}
+}
+
+func TestImportClassifiesAndImportsCurrentObjects(t *testing.T) {
+	app, fs, st := setupConfigured(t)
+	token := setupAndLogin(t, app)
+	modified := time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)
+	fs.keys["archive/new.JPG"] = storage.ObjectInfo{Key: "archive/new.JPG", Size: 10, LastModified: modified}
+	fs.keys["archive/existing.png"] = storage.ObjectInfo{Key: "archive/existing.png", Size: 20, LastModified: modified}
+	fs.keys["archive/notes.txt"] = storage.ObjectInfo{Key: "archive/notes.txt", Size: 30, LastModified: modified}
+	if err := st.CreateImage(&store.Image{ObjectKey: "archive/existing.png", Name: "existing.png", Original: true, CreatedAt: modified}); err != nil {
+		t.Fatal(err)
+	}
+
+	authHdr := map[string]string{"Authorization": "Bearer " + token}
+	res, out := doTest(t, app, http.MethodGet, "/api/admin/import/scan?prefix=archive/", authHdr, nil)
+	if res.StatusCode != http.StatusOK || out["total"] != float64(3) || out["new"] != float64(1) || out["existing"] != float64(1) || out["ignored"] != float64(1) {
+		t.Fatalf("scan = %d, %v", res.StatusCode, out)
+	}
+
+	res, out = doTest(t, app, http.MethodPost, "/api/admin/import/run", map[string]string{
+		"Authorization": "Bearer " + token,
+		"Content-Type":  "application/json",
+	}, []byte(`{"prefix":"archive/"}`))
+	if res.StatusCode != http.StatusOK || out["imported"] != float64(1) || out["skipped"] != float64(1) || out["ignored"] != float64(1) {
+		t.Fatalf("import = %d, %v", res.StatusCode, out)
+	}
+	if _, total, err := st.ListImages(1, 10); err != nil || total != 2 {
+		t.Fatalf("imported image count = %d, err = %v", total, err)
 	}
 }
 

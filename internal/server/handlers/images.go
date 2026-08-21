@@ -77,5 +77,14 @@ func (h *Handler) DeleteImages(c fiber.Ctx) error {
 	if err := h.Store.DeleteByIDs(ids); err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "db_error", "delete db failed")
 	}
+	// 若被删图片正是自定义背景，则同步清除
+	if s.BackgroundImage != "" {
+		for _, k := range keys {
+			if k == s.BackgroundImage {
+				_ = h.Settings.SetOne("background_image", "")
+				break
+			}
+		}
+	}
 	return writeJSON(c, fiber.Map{"deleted": len(ids)})
 }

@@ -147,7 +147,7 @@ curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_key>" -
 curl -X POST https://<host>/api/upload -H "Authorization: Bearer <upload_key>" -F "file=@image.png" -F "original=true"
 ```
 
-**Vite dev 反代**：后端 `DANTA_LISTEN=127.0.0.1:32682`，`vite.config.ts` 反代 `/api` → 后端；生产 `dist/` go:embed，同源。
+**Vite dev 反代**：后端 `DANTA_LISTEN=127.0.0.1:8080`，`vite.config.ts` 反代 `/api` → 后端；生产 `dist/` go:embed，同源。
 
 ## 8. IP 与登录防爆破
 
@@ -180,7 +180,7 @@ danta/
 ## 10. 环境变量与部署
 
 ```bash
-DANTA_LISTEN=127.0.0.1:32682  # 默认 127.0.0.1:32682
+DANTA_LISTEN=127.0.0.1:8080  # 默认 127.0.0.1:8080
 DANTA_DATA_DIR=./data         # SQLite 所在
 ```
 

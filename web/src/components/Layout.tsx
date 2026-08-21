@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useContext, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
@@ -23,8 +23,11 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import StorageIcon from '@mui/icons-material/Storage'
 import SecurityIcon from '@mui/icons-material/Security'
 import ApiIcon from '@mui/icons-material/Api'
-import DownloadIcon from '@mui/icons-material/Download'
+import BuildIcon from '@mui/icons-material/Build'
+import ImageIcon from '@mui/icons-material/Image'
 import { clearToken } from '../api'
+import { AppCtx } from '../App'
+import { usePersistentState } from '../usePersistentState'
 
 const DRAWER_WIDTH = 220
 
@@ -35,15 +38,17 @@ const TOP_ITEMS = [
 
 const SETTINGS_CHILDREN = [
   { p: '/settings/storage', l: '存储', icon: <StorageIcon /> },
+  { p: '/settings/appearance', l: '外观', icon: <ImageIcon /> },
   { p: '/settings/security', l: '安全', icon: <SecurityIcon /> },
-  { p: '/settings/api', l: 'API', icon: <ApiIcon /> },
-  { p: '/settings/migrate', l: '迁移', icon: <DownloadIcon /> }
+  { p: '/settings/api', l: '开发者', icon: <ApiIcon /> },
+  { p: '/settings/maintenance', l: '维护', icon: <BuildIcon /> }
 ]
 
 export default function Layout({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
   const nav = useNavigate()
   const loc = useLocation()
-  const [settingsOpen, setSettingsOpen] = useState(loc.pathname.startsWith('/settings'))
+  const { cfg } = useContext(AppCtx)
+  const [settingsOpen, setSettingsOpen] = usePersistentState<boolean>('danta.settings_open', () => loc.pathname.startsWith('/settings'))
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const logout = () => {
@@ -60,7 +65,8 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
   const drawer = (
     <Box>
       <Toolbar>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
+        <Box component="img" src="/icon-192.png" alt="蛋挞图床" sx={{ width: 32, height: 32, mr: 1.5, borderRadius: 1 }} />
+        <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
           蛋挞图床
         </Typography>
       </Toolbar>
@@ -109,8 +115,26 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
     </Box>
   )
 
+  const backgroundUrl = cfg?.background_url ?? ''
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' } }}>
+    <Box sx={{ position: 'relative', zIndex: 0, display: 'flex', flexDirection: { xs: 'column', md: 'row' } }}>
+      {/* 自定义背景（固定图层，置于内容之下） */}
+      {backgroundUrl && (
+        <>
+          <Box
+            sx={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: -1,
+              backgroundImage: `url(${backgroundUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center'
+            }}
+          />
+          <Box sx={{ position: 'fixed', inset: 0, zIndex: -1, bgcolor: 'rgba(255,255,255,0.5)' }} />
+        </>
+      )}
       {/* 移动端顶栏（文档流内，不悬浮；桌面端隐藏） */}
       <AppBar position="static" sx={{ display: { md: 'none' } }}>
         <Toolbar>
@@ -142,8 +166,25 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
         </Drawer>
       </Box>
 
-      <Box component="main" sx={{ flexGrow: 1, width: '100%', p: { xs: 1.5, sm: 3 }, maxWidth: 1200, mx: 'auto' }}>
-        {children}
+      <Box component="main" sx={{ flexGrow: 1, width: '100%', p: backgroundUrl ? { xs: 1, sm: 2 } : { xs: 1.5, sm: 3 }, maxWidth: 1200, mx: 'auto' }}>
+        {/* 内容面板：半透明表面 + 毛玻璃，背景图只在边缘露出 */}
+        {backgroundUrl ? (
+          <Box
+            sx={{
+              bgcolor: 'rgba(255,255,255,0.85)',
+              borderRadius: 2,
+              border: '1px solid rgba(0,0,0,0.06)',
+              boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              p: { xs: 1.5, sm: 3 }
+            }}
+          >
+            {children}
+          </Box>
+        ) : (
+          children
+        )}
       </Box>
     </Box>
   )

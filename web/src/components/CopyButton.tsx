@@ -3,22 +3,13 @@ import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
 import Snackbar from '@mui/material/Snackbar'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import { copyText } from '../clipboard'
 
 export default function CopyButton({ text, label }: { text: string; label?: string }) {
   const [open, setOpen] = useState(false)
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-    }
-    setOpen(true)
+    if (await copyText(text)) setOpen(true)
   }
 
   return (

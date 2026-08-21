@@ -22,6 +22,7 @@ import { api, ApiError } from '../api'
 import type { StatusResp, UploadResp } from '../types'
 import CopyButton from '../components/CopyButton'
 import { FORMATS, formatLink } from '../format'
+import { usePersistentState } from '../usePersistentState'
 
 interface Item {
   id: number
@@ -85,7 +86,7 @@ async function compressImage(file: File, maxDim: number, quality: number): Promi
 export default function HomePage({ cfg }: { cfg: StatusResp }) {
   const [items, setItems] = useState<Item[]>([])
   const [results, setResults] = useState<Result[]>([])
-  const [original, setOriginal] = useState(false)
+  const [original, setOriginal] = usePersistentState<boolean>('danta.upload_original', () => false)
   const [dragging, setDragging] = useState(false)
   const [globalDrag, setGlobalDrag] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -170,7 +171,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
 
   const uploadOne = async (item: Item, originalFlag: boolean) => {
     if (item.file.size > cfg.max_upload_bytes) {
-      setItems((arr) => arr.map((i) => (i.id === item.id ? { ...i, status: 'error', error: '超过大小限制' } : i)))
+      setItems((arr) => arr.map((i) => (i.id === item.id ? { ...i, status: 'error', error: '图片超过大小限制' } : i)))
       return
     }
     setItems((arr) => arr.map((i) => (i.id === item.id ? { ...i, status: 'uploading', progress: 0, error: undefined } : i)))
@@ -233,12 +234,13 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
         </Typography>
         <FormControlLabel
           control={<Switch checked={original} onChange={(e) => setOriginal(e.target.checked)} />}
-          label="原图直存"
+          label="保留原图画质"
           sx={{ m: 0 }}
         />
       </Stack>
 
       <Paper
+        elevation={0}
         sx={{
           p: 3,
           textAlign: 'center',
@@ -263,8 +265,8 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
         <UploadFileIcon sx={{ fontSize: 64, color: 'text.secondary' }} />
         <Typography variant="h6">拖拽图片到这里，点击选择，或直接 Ctrl+V 粘贴</Typography>
         <Typography variant="body2" color="text.secondary">
-          上限 {Math.round(cfg.max_upload_bytes / 1024 / 1024)}MB / 张
-          {!original && ` · 压缩模式：缩放至 ${cfg.resize_max_dim} 内 · WebP 质量 ${cfg.webp_quality}`}
+          单张最大 {Math.round(cfg.max_upload_bytes / 1024 / 1024)}MB
+          {!original && ' · 上传时自动压缩，减小图片体积'}
         </Typography>
       </Paper>
 
@@ -335,7 +337,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
                   />
                   <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                     <Stack direction="row" spacing={1} alignItems="center">
-                      <Chip size="small" color={r.original ? 'default' : 'primary'} label={r.original ? '原图' : 'WebP'} />
+                      <Chip size="small" color={r.original ? 'default' : 'primary'} label={r.original ? '原图' : '已压缩'} />
                       <Typography variant="body2" noWrap sx={{ flexGrow: 1 }}>
                         {r.name}
                       </Typography>

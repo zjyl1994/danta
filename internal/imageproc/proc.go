@@ -24,6 +24,13 @@ var (
 	ErrDecode      = errors.New("image decode failed")
 )
 
+const (
+	// maxDecodeDim 单边解码上限；maxDecodePixels 解码总像素上限。
+	// 超过上限不做像素解码（防解码炸弹 OOM），回退原图直存。
+	maxDecodeDim    = 16384
+	maxDecodePixels = 40_000_000
+)
+
 // Result 压缩模式处理结果
 type Result struct {
 	Data     []byte
@@ -61,6 +68,11 @@ func DecodeConfig(data []byte) (w, h int, err error) {
 		return 0, 0, err
 	}
 	return cfg.Width, cfg.Height, nil
+}
+
+// exceedsDecodeLimit 判断宽高是否超过像素解码硬上限（防解码炸弹 OOM）
+func exceedsDecodeLimit(w, h int) bool {
+	return w > maxDecodeDim || h > maxDecodeDim || w*h > maxDecodePixels
 }
 
 // Orientation 读 EXIF Orientation（1..8），无/失败返回 1
@@ -211,6 +223,11 @@ func ProcessCompressed(data []byte, resizeMaxDim, quality int) (*Result, error) 
 		if w, h, err := DecodeConfig(data); err == nil && w <= resizeMaxDim && h <= resizeMaxDim {
 			return &Result{Data: data, Ext: "webp", Mime: "image/webp", Width: w, Height: h}, nil
 		}
+	}
+
+	// 解码前尺寸硬上限：超限不做像素解码，回退原图直存（防解码炸弹 OOM）
+	if w, h, derr := DecodeConfig(data); derr == nil && exceedsDecodeLimit(w, h) {
+		return fallback(data, ext, mime), nil
 	}
 
 	// 读 EXIF 方向并物理旋转（Go 解码不含 EXIF）

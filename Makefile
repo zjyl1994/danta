@@ -8,7 +8,7 @@ build:
 	cp -r web/dist/* internal/server/dist/
 	go build -o bin/danta ./cmd/danta
 
-# 前端开发（vite dev 反代 /api → 127.0.0.1:32682）
+# 前端开发（vite dev 反代 /api → 127.0.0.1:8080）
 web-dev:
 	cd web && npm run dev
 

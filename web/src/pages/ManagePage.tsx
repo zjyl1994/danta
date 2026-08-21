@@ -25,7 +25,9 @@ import type { ImageItem, StatsResp } from '../types'
 import CopyButton from '../components/CopyButton'
 import FormatSelect from '../components/FormatSelect'
 import Lightbox from '../components/Lightbox'
+import { copyText } from '../clipboard'
 import { formatLink, Fmt, loadFormat, saveFormat } from '../format'
+import { usePersistentState } from '../usePersistentState'
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -42,7 +44,7 @@ export default function ManagePage() {
   const [rows, setRows] = useState<ImageItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [size, setSize] = useState(20)
+  const [size, setSize] = usePersistentState<number>('danta.list_page_size', () => 20)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [fmt, setFmt] = useState<Fmt>(() => loadFormat())
   const [error, setError] = useState('')
@@ -114,32 +116,30 @@ export default function ManagePage() {
   }
   const copyAll = async () => {
     const text = selectedRows.map((r) => formatLink(fmt, r.url, r.name)).join('\n')
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch { /* ignore */ }
+    await copyText(text)
   }
 
   return (
     <Stack spacing={2}>
-      <Stack spacing={1}>
-        <Typography variant="h6">图片</Typography>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
-          <FormatSelect value={fmt} onChange={changeFmt} />
-          <Button size="small" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
-            批量复制
-          </Button>
-          <Button size="small" color="error" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
-            批量删除
-          </Button>
-        </Stack>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
+        <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          图片
+        </Typography>
+        <FormatSelect value={fmt} onChange={changeFmt} />
+        <Button size="small" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void copyAll()}>
+          批量复制
+        </Button>
+        <Button size="small" color="error" variant="outlined" sx={{ height: 30 }} disabled={selectedRows.length === 0} onClick={() => void remove([...selected])}>
+          批量删除
+        </Button>
       </Stack>
 
       {stats && (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 2 }}>
           {[
             { l: '图片', v: String(stats.images) },
-            { l: '存储', v: fmtBytes(stats.total_size) },
-            { l: '24h 新增', v: String(stats.uploads_24h) },
+            { l: '已用存储', v: fmtBytes(stats.total_size) },
+            { l: '近 24 小时新增', v: String(stats.uploads_24h) },
             { l: '原图', v: String(stats.originals) }
           ].map((c) => (
             <Card variant="outlined" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -167,12 +167,12 @@ export default function ManagePage() {
               </TableCell>
               <TableCell>预览</TableCell>
               <TableCell>名称</TableCell>
-              <TableCell>模式</TableCell>
+              <TableCell>画质</TableCell>
               <TableCell>大小</TableCell>
               <TableCell>尺寸</TableCell>
-              <TableCell>MIME</TableCell>
+              <TableCell>类型</TableCell>
               <TableCell>时间</TableCell>
-              <TableCell>外链</TableCell>
+              <TableCell>分享链接</TableCell>
               <TableCell />
             </TableRow>
           </TableHead>
@@ -199,7 +199,7 @@ export default function ManagePage() {
                   </Typography>
                 </TableCell>
                 <TableCell>
-                  <Chip size="small" color={r.original ? 'default' : 'primary'} label={r.original ? '原图' : 'WebP'} />
+                  <Chip size="small" color={r.original ? 'default' : 'primary'} label={r.original ? '原图' : '已压缩'} />
                 </TableCell>
                 <TableCell>{fmtBytes(r.size)}</TableCell>
                 <TableCell>{r.width > 0 ? `${r.width}x${r.height}` : '--'}</TableCell>

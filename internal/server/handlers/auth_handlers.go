@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/zjyl1994/danta/internal/securetoken"
 	"github.com/zjyl1994/danta/internal/server/middleware"
 )
 
@@ -25,7 +26,7 @@ func (h *Handler) Setup(c fiber.Ctx) error {
 		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "save failed")
 	}
 	// 上传 Key 后台生成（1 个，可重置）
-	key, err := randomKey()
+	key, err := securetoken.Key()
 	if err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "key generation failed")
 	}
@@ -66,10 +67,11 @@ func (h *Handler) Login(c fiber.Ctx) error {
 func (h *Handler) Status(c fiber.Ctx) error {
 	s := h.Settings.Get()
 	return writeJSON(c, fiber.Map{
-		"configured":        s.AdminPasswordHash != "",
-		"authed":            h.isAdminAuthed(c),
-		"resize_max_dim":    s.ResizeMaxDim,
-		"webp_quality":      s.WebPQuality,
-		"max_upload_bytes":  s.MaxUploadBytes,
+		"configured":       s.AdminPasswordHash != "",
+		"authed":           middleware.IsAdmin(c, h.Settings),
+		"resize_max_dim":   s.ResizeMaxDim,
+		"webp_quality":     s.WebPQuality,
+		"max_upload_bytes": s.MaxUploadBytes,
+		"background_url":   backgroundURL(s),
 	})
 }

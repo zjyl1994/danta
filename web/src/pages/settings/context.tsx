@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { api } from '../../api'
+import { AppCtx } from '../../App'
 import type { SettingsResp } from '../../types'
 
 interface SettingsCtx {
@@ -32,6 +33,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [uploadKey, setUploadKey] = useState('')
+  const { refresh } = useContext(AppCtx)
 
   const load = useCallback(async () => {
     try {
@@ -69,7 +71,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       cache_max_age: s.cache_max_age,
       login_fail_limit: s.login_fail_limit,
       login_fail_window: s.login_fail_window,
-      login_ban_seconds: s.login_ban_seconds
+      login_ban_seconds: s.login_ban_seconds,
+      background_image: s.background_image
     }
     if (secret) body.r2_secret_access_key = secret
     try {
@@ -77,6 +80,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       setS(r.data)
       setSecret('')
       setMsg('已保存')
+      void refresh()
     } catch (e: any) {
       setErr(e.message)
     }
@@ -87,9 +91,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setMsg('')
     try {
       await api.post('/admin/settings/test-r2')
-      setMsg('R2 连接正常')
+      setMsg('连接正常')
     } catch (e: any) {
-      setErr('R2 连接失败：' + e.message)
+      setErr('连接失败：' + e.message)
     }
   }
 
@@ -105,11 +109,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }
 
   const resetUploadKey = async () => {
-    if (!window.confirm('重置后旧上传 Key 立即失效，确认？')) return
+    if (!window.confirm('重置后旧的上传密钥将立即失效，确认继续？')) return
     try {
       const r = await api.post<{ upload_key: string }>('/admin/upload-key')
       setUploadKey(r.data.upload_key)
-      setMsg('上传 Key 已重置')
+      setMsg('上传密钥已重置')
     } catch (e: any) {
       setErr(e.message)
     }

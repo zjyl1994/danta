@@ -48,6 +48,12 @@ func validJWT(tok, secret string) bool {
 	return ok
 }
 
+// IsAdmin reports whether the request carries a valid administrator JWT.
+func IsAdmin(c fiber.Ctx, st *settings.Manager) bool {
+	s := st.Get()
+	return validJWT(bearerToken(c), s.MasterSecret)
+}
+
 // IsUploadKey 校验上传 Key
 func isUploadKey(tok, key string) bool {
 	if tok == "" || key == "" {
@@ -56,15 +62,18 @@ func isUploadKey(tok, key string) bool {
 	return subtle.ConstantTimeCompare([]byte(tok), []byte(key)) == 1
 }
 
+func unauthorized(c fiber.Ctx) error {
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		"code":    "auth_failed",
+		"message": "unauthorized",
+	})
+}
+
 // AdminAuth 管理 API 中间件：仅管理员 JWT
 func AdminAuth(st *settings.Manager) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		s := st.Get()
-		if !validJWT(bearerToken(c), s.MasterSecret) {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code":    "auth_failed",
-				"message": "unauthorized",
-			})
+		if !IsAdmin(c, st) {
+			return unauthorized(c)
 		}
 		return c.Next()
 	}
@@ -76,10 +85,7 @@ func UploadAuth(st *settings.Manager) fiber.Handler {
 		s := st.Get()
 		tok := bearerToken(c)
 		if !isUploadKey(tok, s.UploadKey) && !validJWT(tok, s.MasterSecret) {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"code":    "auth_failed",
-				"message": "unauthorized",
-			})
+			return unauthorized(c)
 		}
 		return c.Next()
 	}
@@ -98,9 +104,9 @@ func BanGuard(b *Ban, st *settings.Manager) fiber.Handler {
 				retry = 1
 			}
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"code":         "too_many_requests",
-				"message":      "IP banned, retry later",
-				"retry_after":  retry,
+				"code":        "too_many_requests",
+				"message":     "IP banned, retry later",
+				"retry_after": retry,
 			})
 		}
 		return c.Next()

@@ -4,6 +4,7 @@ export interface StatusResp {
   resize_max_dim: number
   webp_quality: number
   max_upload_bytes: number
+  background_url: string
 }
 
 export interface UploadResp {
@@ -59,6 +60,8 @@ export interface SettingsResp {
   login_fail_window: number
   login_ban_seconds: number
   has_password: boolean
+  background_image: string
+  background_url: string
 }
 
 export interface ScanItem {

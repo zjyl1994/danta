@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/zjyl1994/danta/internal/securetoken"
 	"github.com/zjyl1994/danta/internal/server/middleware"
 )
 
@@ -24,20 +25,22 @@ func (h *Handler) publicSettings() fiber.Map {
 		return v[:2] + "****" + v[len(v)-2:]
 	}
 	return fiber.Map{
-		"cdn_host":              s.CDNHost,
-		"proxy_mode":            s.ProxyMode,
-		"max_upload_bytes":      s.MaxUploadBytes,
-		"webp_quality":          s.WebPQuality,
-		"resize_max_dim":        s.ResizeMaxDim,
-		"cache_max_age":         s.CacheMaxAge,
-		"r2_endpoint":           s.R2Endpoint,
-		"r2_access_key_id":      s.R2AccessKeyID,
-		"r2_secret_access_key":  mask(s.R2SecretAccessKey),
-		"r2_bucket":             s.R2Bucket,
-		"login_fail_limit":      s.LoginFailLimit,
-		"login_fail_window":     s.LoginFailWindow,
-		"login_ban_seconds":     s.LoginBanSeconds,
-		"has_password":          s.AdminPasswordHash != "",
+		"cdn_host":             s.CDNHost,
+		"proxy_mode":           s.ProxyMode,
+		"max_upload_bytes":     s.MaxUploadBytes,
+		"webp_quality":         s.WebPQuality,
+		"resize_max_dim":       s.ResizeMaxDim,
+		"cache_max_age":        s.CacheMaxAge,
+		"r2_endpoint":          s.R2Endpoint,
+		"r2_access_key_id":     s.R2AccessKeyID,
+		"r2_secret_access_key": mask(s.R2SecretAccessKey),
+		"r2_bucket":            s.R2Bucket,
+		"login_fail_limit":     s.LoginFailLimit,
+		"login_fail_window":    s.LoginFailWindow,
+		"login_ban_seconds":    s.LoginBanSeconds,
+		"has_password":         s.AdminPasswordHash != "",
+		"background_image":     s.BackgroundImage,
+		"background_url":       backgroundURL(s),
 	}
 }
 
@@ -75,11 +78,11 @@ func (h *Handler) UpdateSettings(c fiber.Ctx) error {
 
 	updates := map[string]string{}
 	strFields := map[string]string{
-		"cdn_host":             "cdn_host",
-		"proxy_mode":           "proxy_mode",
-		"r2_endpoint":          "r2.endpoint",
-		"r2_access_key_id":     "r2.access_key_id",
-		"r2_bucket":            "r2.bucket",
+		"cdn_host":         "cdn_host",
+		"proxy_mode":       "proxy_mode",
+		"r2_endpoint":      "r2.endpoint",
+		"r2_access_key_id": "r2.access_key_id",
+		"r2_bucket":        "r2.bucket",
 	}
 	for k, dbk := range strFields {
 		if v, ok := body[k].(string); ok {
@@ -90,14 +93,27 @@ func (h *Handler) UpdateSettings(c fiber.Ctx) error {
 	if v, ok := body["r2_secret_access_key"].(string); ok && v != "" {
 		updates["r2.secret_access_key"] = v
 	}
+	// 自定义背景图：空=清除；非空必须是已上传图片的对象键
+	if v, ok := body["background_image"].(string); ok {
+		if v != "" {
+			exists, err := h.Store.ImageExists(v)
+			if err != nil {
+				return writeErr(c, fiber.StatusInternalServerError, "internal_error", "query failed")
+			}
+			if !exists {
+				return writeErr(c, fiber.StatusBadRequest, "bad_request", "image not found")
+			}
+		}
+		updates["background_image"] = v
+	}
 	intFields := map[string]string{
-		"max_upload_bytes":   "max_upload_bytes",
-		"webp_quality":       "webp_quality",
-		"resize_max_dim":     "resize_max_dim",
-		"cache_max_age":      "cache_max_age",
-		"login_fail_limit":   "security.login_fail_limit",
-		"login_fail_window":  "security.login_fail_window",
-		"login_ban_seconds":  "security.login_ban_seconds",
+		"max_upload_bytes":  "max_upload_bytes",
+		"webp_quality":      "webp_quality",
+		"resize_max_dim":    "resize_max_dim",
+		"cache_max_age":     "cache_max_age",
+		"login_fail_limit":  "security.login_fail_limit",
+		"login_fail_window": "security.login_fail_window",
+		"login_ban_seconds": "security.login_ban_seconds",
 	}
 	for k, dbk := range intFields {
 		switch v := body[k].(type) {
@@ -166,7 +182,7 @@ func (h *Handler) ClientIP(c fiber.Ctx) error {
 
 // POST /api/admin/upload-key 重置上传 Key
 func (h *Handler) ResetUploadKey(c fiber.Ctx) error {
-	key, err := randomKey()
+	key, err := securetoken.Key()
 	if err != nil {
 		return writeErr(c, fiber.StatusInternalServerError, "internal_error", "generation failed")
 	}

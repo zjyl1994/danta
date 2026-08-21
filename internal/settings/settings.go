@@ -1,11 +1,10 @@
 package settings
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"strconv"
 	"sync"
 
+	"github.com/zjyl1994/danta/internal/securetoken"
 	"github.com/zjyl1994/danta/internal/store"
 )
 
@@ -21,11 +20,12 @@ type Settings struct {
 	R2SecretAccessKey string
 	R2Bucket          string
 	ProxyMode         string
+	BackgroundImage   string
 
-	MaxUploadBytes  int64
-	WebPQuality     int
-	ResizeMaxDim    int
-	CacheMaxAge     int
+	MaxUploadBytes int64
+	WebPQuality    int
+	ResizeMaxDim   int
+	CacheMaxAge    int
 
 	LoginFailLimit  int
 	LoginFailWindow int
@@ -52,14 +52,6 @@ type Manager struct {
 
 func New(st *store.Store) *Manager {
 	return &Manager{store: st}
-}
-
-func randHex(nBytes int) (string, error) {
-	b := make([]byte, nBytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }
 
 func intVal(s string, def int) int {
@@ -94,7 +86,7 @@ func (m *Manager) Load() error {
 		return err
 	}
 	if secret == "" {
-		if secret, err = randHex(32); err != nil {
+		if secret, err = securetoken.Hex(32); err != nil {
 			return err
 		}
 		if err = m.store.SetSetting("master_secret", secret); err != nil {
@@ -102,77 +94,7 @@ func (m *Manager) Load() error {
 		}
 	}
 
-	s := Settings{
-		MasterSecret:      secret,
-		ProxyMode:         defaultProxyMode,
-		MaxUploadBytes:    defaultMaxUploadBytes,
-		WebPQuality:       defaultWebPQuality,
-		ResizeMaxDim:      defaultResizeMaxDim,
-		CacheMaxAge:       defaultCacheMaxAge,
-		LoginFailLimit:    defaultLoginFailLimit,
-		LoginFailWindow:   defaultLoginWindow,
-		LoginBanSeconds:   defaultLoginBanSec,
-	}
-
-	pairs := map[string]*string{
-		"admin.password_hash":       &s.AdminPasswordHash,
-		"upload_key":                &s.UploadKey,
-		"cdn_host":                  &s.CDNHost,
-		"r2.endpoint":               &s.R2Endpoint,
-		"r2.access_key_id":          &s.R2AccessKeyID,
-		"r2.secret_access_key":      &s.R2SecretAccessKey,
-		"r2.bucket":                 &s.R2Bucket,
-		"proxy_mode":                &s.ProxyMode,
-	}
-	for k, p := range pairs {
-		v, err := m.store.GetSetting(k)
-		if err != nil {
-			return err
-		}
-		*p = v
-	}
-	if s.ProxyMode != "local" && s.ProxyMode != "none" {
-		s.ProxyMode = defaultProxyMode
-	}
-
-	if v, err := m.store.GetSetting("max_upload_bytes"); err != nil {
-		return err
-	} else {
-		s.MaxUploadBytes = int64Val(v, defaultMaxUploadBytes)
-	}
-	if v, err := m.store.GetSetting("webp_quality"); err != nil {
-		return err
-	} else {
-		s.WebPQuality = intVal(v, defaultWebPQuality)
-	}
-	if v, err := m.store.GetSetting("resize_max_dim"); err != nil {
-		return err
-	} else {
-		s.ResizeMaxDim = intVal(v, defaultResizeMaxDim)
-	}
-	if v, err := m.store.GetSetting("cache_max_age"); err != nil {
-		return err
-	} else {
-		s.CacheMaxAge = intVal(v, defaultCacheMaxAge)
-	}
-	if v, err := m.store.GetSetting("security.login_fail_limit"); err != nil {
-		return err
-	} else {
-		s.LoginFailLimit = intVal(v, defaultLoginFailLimit)
-	}
-	if v, err := m.store.GetSetting("security.login_fail_window"); err != nil {
-		return err
-	} else {
-		s.LoginFailWindow = intVal(v, defaultLoginWindow)
-	}
-	if v, err := m.store.GetSetting("security.login_ban_seconds"); err != nil {
-		return err
-	} else {
-		s.LoginBanSeconds = intVal(v, defaultLoginBanSec)
-	}
-
-	m.cur = s
-	return nil
+	return m.loadLocked(secret)
 }
 
 // Get 返回当前配置副本
@@ -191,7 +113,7 @@ func (m *Manager) Set(values map[string]string) error {
 			return err
 		}
 	}
-	return m.loadLocked()
+	return m.loadLocked(m.cur.MasterSecret)
 }
 
 // SetOne 写单个配置
@@ -201,7 +123,7 @@ func (m *Manager) SetOne(k, v string) error {
 	if err := m.store.SetSetting(k, v); err != nil {
 		return err
 	}
-	return m.loadLocked()
+	return m.loadLocked(m.cur.MasterSecret)
 }
 
 // Configured 是否完成 setup（已设密码）
@@ -215,63 +137,67 @@ func (s Settings) R2Configured() bool {
 		s.R2SecretAccessKey != "" && s.R2Bucket != ""
 }
 
-func (m *Manager) loadLocked() error {
-	s := m.cur
+func (m *Manager) loadLocked(masterSecret string) error {
+	s, err := m.read(masterSecret)
+	if err != nil {
+		return err
+	}
+	m.cur = s
+	return nil
+}
+
+// read 读取持久化配置并应用默认值；调用方负责持有 m.mu。
+func (m *Manager) read(masterSecret string) (Settings, error) {
+	s := Settings{
+		MasterSecret:    masterSecret,
+		ProxyMode:       defaultProxyMode,
+		MaxUploadBytes:  defaultMaxUploadBytes,
+		WebPQuality:     defaultWebPQuality,
+		ResizeMaxDim:    defaultResizeMaxDim,
+		CacheMaxAge:     defaultCacheMaxAge,
+		LoginFailLimit:  defaultLoginFailLimit,
+		LoginFailWindow: defaultLoginWindow,
+		LoginBanSeconds: defaultLoginBanSec,
+	}
 	pairs := map[string]*string{
-		"admin.password_hash":       &s.AdminPasswordHash,
-		"upload_key":                &s.UploadKey,
-		"cdn_host":                  &s.CDNHost,
-		"r2.endpoint":               &s.R2Endpoint,
-		"r2.access_key_id":          &s.R2AccessKeyID,
-		"r2.secret_access_key":      &s.R2SecretAccessKey,
-		"r2.bucket":                 &s.R2Bucket,
-		"proxy_mode":                &s.ProxyMode,
+		"admin.password_hash":  &s.AdminPasswordHash,
+		"upload_key":           &s.UploadKey,
+		"cdn_host":             &s.CDNHost,
+		"r2.endpoint":          &s.R2Endpoint,
+		"r2.access_key_id":     &s.R2AccessKeyID,
+		"r2.secret_access_key": &s.R2SecretAccessKey,
+		"r2.bucket":            &s.R2Bucket,
+		"proxy_mode":           &s.ProxyMode,
+		"background_image":     &s.BackgroundImage,
 	}
 	for k, p := range pairs {
 		v, err := m.store.GetSetting(k)
 		if err != nil {
-			return err
+			return Settings{}, err
 		}
 		*p = v
 	}
 	if s.ProxyMode != "local" && s.ProxyMode != "none" {
 		s.ProxyMode = defaultProxyMode
 	}
-	if v, err := m.store.GetSetting("max_upload_bytes"); err != nil {
-		return err
-	} else {
-		s.MaxUploadBytes = int64Val(v, defaultMaxUploadBytes)
+	values := []struct {
+		key   string
+		apply func(string)
+	}{
+		{"max_upload_bytes", func(v string) { s.MaxUploadBytes = int64Val(v, defaultMaxUploadBytes) }},
+		{"webp_quality", func(v string) { s.WebPQuality = intVal(v, defaultWebPQuality) }},
+		{"resize_max_dim", func(v string) { s.ResizeMaxDim = intVal(v, defaultResizeMaxDim) }},
+		{"cache_max_age", func(v string) { s.CacheMaxAge = intVal(v, defaultCacheMaxAge) }},
+		{"security.login_fail_limit", func(v string) { s.LoginFailLimit = intVal(v, defaultLoginFailLimit) }},
+		{"security.login_fail_window", func(v string) { s.LoginFailWindow = intVal(v, defaultLoginWindow) }},
+		{"security.login_ban_seconds", func(v string) { s.LoginBanSeconds = intVal(v, defaultLoginBanSec) }},
 	}
-	if v, err := m.store.GetSetting("webp_quality"); err != nil {
-		return err
-	} else {
-		s.WebPQuality = intVal(v, defaultWebPQuality)
+	for _, value := range values {
+		v, err := m.store.GetSetting(value.key)
+		if err != nil {
+			return Settings{}, err
+		}
+		value.apply(v)
 	}
-	if v, err := m.store.GetSetting("resize_max_dim"); err != nil {
-		return err
-	} else {
-		s.ResizeMaxDim = intVal(v, defaultResizeMaxDim)
-	}
-	if v, err := m.store.GetSetting("cache_max_age"); err != nil {
-		return err
-	} else {
-		s.CacheMaxAge = intVal(v, defaultCacheMaxAge)
-	}
-	if v, err := m.store.GetSetting("security.login_fail_limit"); err != nil {
-		return err
-	} else {
-		s.LoginFailLimit = intVal(v, defaultLoginFailLimit)
-	}
-	if v, err := m.store.GetSetting("security.login_fail_window"); err != nil {
-		return err
-	} else {
-		s.LoginFailWindow = intVal(v, defaultLoginWindow)
-	}
-	if v, err := m.store.GetSetting("security.login_ban_seconds"); err != nil {
-		return err
-	} else {
-		s.LoginBanSeconds = intVal(v, defaultLoginBanSec)
-	}
-	m.cur = s
-	return nil
+	return s, nil
 }
