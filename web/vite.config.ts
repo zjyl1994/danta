@@ -13,9 +13,20 @@ export default defineConfig({
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
-        // 第三方依赖（含 CJS interop 辅助模块）统一进 vendor，避免跨 chunk 循环依赖
         manualChunks(id) {
-          if (id.startsWith('\0') || id.includes('node_modules')) return 'vendor'
+          // Vite 虚拟模块（preload-helper 等）跟随引用方，避免跨 chunk 强制依赖成环
+          if (id.startsWith('\0')) return undefined
+          if (!id.includes('node_modules')) return 'app'
+          // MUI 及其底层样式/动画依赖
+          if (/(?:^|[\\/])@mui[\\/]/.test(id) || /(?:^|[\\/])@emotion[\\/]/.test(id) || /(?:^|[\\/])@popperjs[\\/]/.test(id)) return 'mui'
+          // React 运行时与路由
+          if (/(?:^|[\\/])@remix-run[\\/]/.test(id)) return 'react'
+          if (
+            /(?:^|[\\/])(react-router-dom|react-router|react-dom|react-dropzone|react-transition-group|react-is|react|scheduler|hoist-non-react-statics|prop-types|object-assign|loose-envify|js-tokens|clsx|csstype|dom-helpers|attr-accept|file-selector)[\\/]/.test(id)
+          ) {
+            return 'react'
+          }
+          return 'vendor'
         }
       }
     }

@@ -2,7 +2,7 @@
 
 # 完整构建：前端 build → 拷入 embed → go build
 build:
-	cd web && npm run build
+	cd web && pnpm build
 	rm -rf internal/server/dist
 	mkdir -p internal/server/dist
 	cp -r web/dist/* internal/server/dist/
@@ -10,11 +10,11 @@ build:
 
 # 前端开发（vite dev 反代 /api → 127.0.0.1:8080）
 web-dev:
-	cd web && npm run dev
+	cd web && pnpm dev
 
 # 仅构建前端并拷入 embed
 web-build:
-	cd web && npm run build
+	cd web && pnpm build
 	rm -rf internal/server/dist
 	mkdir -p internal/server/dist
 	cp -r web/dist/* internal/server/dist/
