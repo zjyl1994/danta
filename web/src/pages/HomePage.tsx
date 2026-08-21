@@ -315,6 +315,7 @@ export default function HomePage({ cfg }: { cfg: StatusResp }) {
                   />
                   <ListItemText
                     primary={it.file.name}
+                    secondaryTypographyProps={{ component: 'div' }}
                     secondary={
                       <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                         <Typography component="span" variant="caption" color="text.secondary">

@@ -359,7 +359,7 @@ function ApiCard() {
               </Button>
             </Stack>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              用于通过命令行等工具上传图片，等同于您的上传权限，请妥善保管。令牌只显示一次，丢失后需重新创建。
+              上传令牌仅用于通过命令行等工具上传图片，不能访问管理后台。令牌只显示一次，丢失后需重新创建。
             </Typography>
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
@@ -445,13 +445,12 @@ function ApiCard() {
         <DialogContent dividers>
           {created ? (
             <Stack spacing={1}>
-              <Alert severity="warning">令牌仅显示这一次，请立即复制保存。关闭后无法再次查看。</Alert>
-              <TextField value={created.token} fullWidth disabled />
-              <Stack direction="row" justifyContent="flex-end" spacing={1}>
-                <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={() => void copyText(created.token)}>
-                  复制令牌
-                </Button>
-                <Button variant="contained" onClick={() => setCreated(null)}>再创建一个</Button>
+              <Alert severity="warning">令牌仅显示这一次，请立即复制保存；仅用于上传，不能访问管理后台。关闭后无法再次查看。</Alert>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <TextField value={created.token} fullWidth disabled />
+                <IconButton size="small" color="primary" aria-label="复制令牌" onClick={() => void copyText(created.token)}>
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
               </Stack>
             </Stack>
           ) : (

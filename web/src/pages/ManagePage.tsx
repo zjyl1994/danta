@@ -6,7 +6,6 @@ import {
   Card,
   CardContent,
   Checkbox,
-  Chip,
   IconButton,
   Paper,
   Stack,
@@ -17,9 +16,11 @@ import {
   TableHead,
   TablePagination,
   TableRow,
+  Tooltip,
   Typography
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
+import CropOriginalIcon from '@mui/icons-material/CropOriginal'
 import { api } from '../api'
 import type { ImageItem, StatsResp } from '../types'
 import CopyButton from '../components/CopyButton'
@@ -139,12 +140,12 @@ export default function ManagePage() {
       {stats && (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' }, gap: 2 }}>
           {[
-            { l: '图片', v: String(stats.images) },
-            { l: '已用存储', v: fmtBytes(stats.total_size) },
-            { l: '近 24 小时新增', v: String(stats.uploads_24h) },
-            { l: '原图', v: String(stats.originals) }
+            { k: 'images', l: '图片', v: String(stats.images) },
+            { k: 'size', l: '已用存储', v: fmtBytes(stats.total_size) },
+            { k: 'uploads', l: '近 24 小时新增', v: String(stats.uploads_24h) },
+            { k: 'originals', l: '原图', v: String(stats.originals) }
           ].map((c) => (
-            <Card variant="outlined" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <Card key={c.k} variant="outlined" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 1 }}>
                 <Typography variant="body2" color="text.secondary" noWrap>
                   {c.l}
@@ -167,15 +168,13 @@ export default function ManagePage() {
               <TableCell padding="checkbox">
                 <Checkbox checked={rows.length > 0 && selected.size === rows.length} indeterminate={selected.size > 0 && selected.size < rows.length} onChange={toggleAll} />
               </TableCell>
-              <TableCell>预览</TableCell>
-              <TableCell>名称</TableCell>
-              <TableCell>画质</TableCell>
-              <TableCell>大小</TableCell>
-              <TableCell>尺寸</TableCell>
-              <TableCell>类型</TableCell>
-              <TableCell>时间</TableCell>
-              <TableCell>分享链接</TableCell>
-              <TableCell />
+              <TableCell sx={{ width: 64 }}>预览</TableCell>
+              <TableCell sx={{ width: '100%', minWidth: 120 }}>名称</TableCell>
+              <TableCell sx={{ width: 88 }}>大小</TableCell>
+              <TableCell sx={{ width: 100 }}>尺寸</TableCell>
+              <TableCell sx={{ width: 100 }}>类型</TableCell>
+              <TableCell sx={{ width: 170 }}>时间</TableCell>
+              <TableCell sx={{ width: 100 }}>操作</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -195,31 +194,35 @@ export default function ManagePage() {
                     onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')}
                   />
                 </TableCell>
-                <TableCell sx={{ maxWidth: 160 }}>
-                  <Typography variant="body2" noWrap title={r.name}>
-                    {r.name}
-                  </Typography>
+                <TableCell sx={{ width: '100%', minWidth: 120 }}>
+                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" noWrap title={r.name} sx={{ minWidth: 0, flexGrow: 1 }}>
+                      {r.name}
+                    </Typography>
+                    {r.original && (
+                      <Tooltip title="原图">
+                        <CropOriginalIcon fontSize="small" color="primary" sx={{ flexShrink: 0 }} />
+                      </Tooltip>
+                    )}
+                  </Stack>
                 </TableCell>
-                <TableCell>
-                  <Chip size="small" color={r.original ? 'default' : 'primary'} label={r.original ? '原图' : '已压缩'} />
-                </TableCell>
-                <TableCell>{fmtBytes(r.size)}</TableCell>
-                <TableCell>{r.width > 0 ? `${r.width}x${r.height}` : '--'}</TableCell>
-                <TableCell>{r.mime || '--'}</TableCell>
-                <TableCell>{fmtTime(r.created_at)}</TableCell>
-                <TableCell>
-                  <CopyButton text={formatLink(fmt, r.url, r.name)} />
-                </TableCell>
-                <TableCell>
-                  <IconButton size="small" color="error" onClick={() => void remove([r.id])}>
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtBytes(r.size)}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.width > 0 ? `${r.width}x${r.height}` : '--'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.mime ? r.mime.replace(/^image\//, '') : '--'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtTime(r.created_at)}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    <CopyButton text={formatLink(fmt, r.url, r.name)} />
+                    <IconButton size="small" color="error" onClick={() => void remove([r.id])}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
             {rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                <TableCell colSpan={8} sx={{ textAlign: 'center', color: 'text.secondary' }}>
                   {loading ? '加载中…' : '暂无图片'}
                 </TableCell>
               </TableRow>
