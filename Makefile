@@ -1,5 +1,7 @@
 .PHONY: build web-dev web-build test lint vet run clean
 
+UPX := $(shell command -v upx 2>/dev/null)
+
 # 完整构建：前端 build → 拷入 embed → go build
 build:
 	cd web && pnpm build
@@ -7,6 +9,9 @@ build:
 	mkdir -p internal/server/dist
 	cp -r web/dist/* internal/server/dist/
 	go build -o bin/danta ./cmd/danta
+ifneq ($(UPX),)
+	$(UPX) bin/danta
+endif
 
 # 前端开发（vite dev 反代 /api → 127.0.0.1:8080）
 web-dev:
