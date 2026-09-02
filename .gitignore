@@ -31,6 +31,7 @@ go.work.sum
 bin/
 web/node_modules/
 web/dist/
+web/.vite/
 web/tsconfig.tsbuildinfo
 
 # go:embed 前端产物（仅保留占位文件，其余忽略）
